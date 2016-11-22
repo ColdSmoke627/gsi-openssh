@@ -984,10 +984,14 @@ input_gssapi_error(int type, u_int32_t plen, void *ctxt)
 #ifdef GSI
 extern
 const gss_OID_desc * const              gss_mech_globus_gssapi_openssl;
+const gss_OID_desc * const              gss_mech_globus_gssapi_openssl_micv2;
 #define is_gsi_oid(oid) \
-  (oid->length == gss_mech_globus_gssapi_openssl->length && \
+  ((oid->length == gss_mech_globus_gssapi_openssl->length && \
    (memcmp(oid->elements, gss_mech_globus_gssapi_openssl->elements, \
-	   oid->length) == 0))
+	   oid->length) == 0)) || \
+   (oid->length == gss_mech_globus_gssapi_openssl_micv2->length && \
+   (memcmp(oid->elements, gss_mech_globus_gssapi_openssl_micv2->elements, \
+	   oid->length) == 0)))
 #endif
 
 int

@@ -123,6 +123,7 @@ extern ssh_gssapi_mech gssapi_kerberos_mech;
 #endif
 #ifdef GSI
 extern ssh_gssapi_mech gssapi_gsi_mech;
+extern ssh_gssapi_mech gssapi_gsi_mech_micv2;
 #endif
 
 
@@ -131,6 +132,7 @@ ssh_gssapi_mech* supported_mechs[]= {
 	&gssapi_kerberos_mech,
 #endif
 #ifdef GSI
+	&gssapi_gsi_mech_micv2,
 	&gssapi_gsi_mech,
 #endif
 	&gssapi_null_mech,
@@ -343,9 +345,12 @@ ssh_gssapi_parse_ename(Gssctxt *ctx, gss_buffer_t ename, gss_buffer_t name)
 	tok = ename->value;
 
 #ifdef GSI /* GSI gss_export_name() is broken. */
-	if ((ctx->oid->length == gssapi_gsi_mech.oid.length) &&
-	    (memcmp(ctx->oid->elements, gssapi_gsi_mech.oid.elements,
-		    gssapi_gsi_mech.oid.length) == 0)) {
+	if (((ctx->oid->length == gssapi_gsi_mech.oid.length) &&
+	     (memcmp(ctx->oid->elements, gssapi_gsi_mech.oid.elements,
+		    gssapi_gsi_mech.oid.length) == 0)) ||
+	    ((ctx->oid->length == gssapi_gsi_mech_micv2.oid.length) &&
+	     (memcmp(ctx->oid->elements, gssapi_gsi_mech_micv2.oid.elements,
+		    gssapi_gsi_mech_micv2.oid.length) == 0))) {
 	    name->length = ename->length;
 	    name->value = xmalloc(ename->length+1);
 	    memcpy(name->value, ename->value, ename->length);

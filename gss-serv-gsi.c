@@ -50,6 +50,7 @@ extern ServerOptions options;
 static int ssh_gssapi_gsi_userok(ssh_gssapi_client *client, char *name);
 static int ssh_gssapi_gsi_localname(ssh_gssapi_client *client, char **user);
 static void ssh_gssapi_gsi_storecreds(ssh_gssapi_client *client);
+static void ssh_gssapi_gsi_storecreds_micv2(ssh_gssapi_client *client);
 static int ssh_gssapi_gsi_updatecreds(ssh_gssapi_ccache *store,
 				       ssh_gssapi_client *client);
 
@@ -61,6 +62,17 @@ ssh_gssapi_mech gssapi_gsi_mech = {
 	&ssh_gssapi_gsi_userok,
 	&ssh_gssapi_gsi_localname,
 	&ssh_gssapi_gsi_storecreds,
+	&ssh_gssapi_gsi_updatecreds
+};
+
+ssh_gssapi_mech gssapi_gsi_mech_micv2 = {
+	"vz8J1E9PzLr8b1K+0remTg==",
+	"GSI",
+	{10, "\x2b\x06\x01\x04\x01\x9b\x50\x01\x01\x01"},
+	NULL,
+	&ssh_gssapi_gsi_userok,
+	&ssh_gssapi_gsi_localname,
+	&ssh_gssapi_gsi_storecreds_micv2,
 	&ssh_gssapi_gsi_updatecreds
 };
 
@@ -224,6 +236,73 @@ ssh_gssapi_gsi_storecreds(ssh_gssapi_client *client)
 #endif
 	gss_release_buffer(&minor_status, &export_cred);
 }
+
+/*
+ * Export GSI credentials to disk.
+ */
+static void
+ssh_gssapi_gsi_storecreds_micv2(ssh_gssapi_client *client)
+{
+	OM_uint32	major_status;
+	OM_uint32	minor_status;
+	gss_buffer_desc	export_cred = GSS_C_EMPTY_BUFFER;
+	char *		p;
+	
+	if (!client || !client->creds) {
+	    return;
+	}
+
+	major_status = gss_export_cred(&minor_status,
+				       client->creds,
+				       GSS_C_NO_OID,
+				       1,
+				       &export_cred);
+	if (GSS_ERROR(major_status) && major_status != GSS_S_UNAVAILABLE) {
+	    Gssctxt *ctx;
+	    ssh_gssapi_build_ctx(&ctx);
+	    ctx->major = major_status;
+	    ctx->minor = minor_status;
+	    ssh_gssapi_set_oid(ctx, &gssapi_gsi_mech_micv2.oid);
+	    ssh_gssapi_error(ctx);
+	    ssh_gssapi_delete_ctx(&ctx);
+	    return;
+	}
+	
+	p = strchr((char *) export_cred.value, '=');
+	if (p == NULL) {
+	    logit("Failed to parse exported credentials string '%.100s'",
+		(char *)export_cred.value);
+	    gss_release_buffer(&minor_status, &export_cred);
+	    return;
+	}
+	*p++ = '\0';
+	if (strcmp((char *)export_cred.value,"X509_USER_DELEG_PROXY") == 0) {
+	    client->store.envvar = strdup("X509_USER_PROXY");
+	} else {
+	    client->store.envvar = strdup((char *)export_cred.value);
+	}
+	if (access(p, R_OK) == 0) {
+        if (client->store.filename) {
+            if (rename(p, client->store.filename) < 0) {
+                logit("Failed to rename %s to %s: %s", p,
+                      client->store.filename, strerror(errno));
+                free(client->store.filename);
+                client->store.filename = strdup(p);
+            } else {
+                p = client->store.filename;
+            }
+        } else {
+            client->store.filename = strdup(p);
+        }
+	}
+	client->store.envval = strdup(p);
+#ifdef USE_PAM
+	if (options.use_pam)
+	    do_pam_putenv(client->store.envvar, client->store.envval);
+#endif
+	gss_release_buffer(&minor_status, &export_cred);
+}
+
 
 /*
  * Export updated GSI credentials to disk.
