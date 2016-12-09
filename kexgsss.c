@@ -74,6 +74,7 @@ kexgss_server(struct ssh *ssh)
     u_char hash[SSH_DIGEST_MAX_LENGTH];
 	DH *dh = NULL;
 	int min = -1, max = -1, nbits = -1;
+	int cmin = -1, cmax = -1; /* client proposal */
 	BIGNUM *shared_secret = NULL;
 	BIGNUM *dh_client_pub = NULL;
 	int type = 0;
@@ -112,11 +113,12 @@ kexgss_server(struct ssh *ssh)
 	case KEX_GSS_GEX_SHA1:
 		debug("Doing group exchange");
 		packet_read_expect(SSH2_MSG_KEXGSS_GROUPREQ);
-		min = packet_get_int();
+		/* store client proposal to provide valid signature */
+		cmin = packet_get_int();
 		nbits = packet_get_int();
-		max = packet_get_int();
-		min = MAX(DH_GRP_MIN, min);
-		max = MIN(DH_GRP_MAX, max);
+		cmax = packet_get_int();
+		min = MAX(DH_GRP_MIN, cmin);
+		max = MIN(DH_GRP_MAX, cmax);
 		packet_check_eom();
 		if (max < min || nbits < min || max < nbits)
 			fatal("GSS_GEX, bad parameters: %d !< %d !< %d",
@@ -240,7 +242,7 @@ kexgss_server(struct ssh *ssh)
 		    buffer_ptr(kex->peer), buffer_len(kex->peer),
 		    buffer_ptr(kex->my), buffer_len(kex->my),
 		    NULL, 0,
-		    min, nbits, max,
+		    cmin, nbits, cmax,
 		    dh->p, dh->g,
 		    dh_client_pub,
 		    dh->pub_key,
