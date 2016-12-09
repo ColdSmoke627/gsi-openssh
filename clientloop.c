@@ -321,7 +321,6 @@ client_x11_get_proto(const char *display, const char *xauth_path,
         int is_path_to_socket = 0;
 #endif /* __APPLE__ */
 
-	xauthdir = xauthfile = NULL;
 	*_proto = proto;
 	*_data = data;
 	proto[0] = data[0] = xauthfile[0] = xauthdir[0] = '\0';
