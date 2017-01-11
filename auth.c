@@ -331,7 +331,7 @@ auth_log(Authctxt *authctxt, int authenticated, int partial,
 
 /* TODO
 	s_audit("auth_info_3", "count=%i uristring=%s uristring=%s uristring=%s addr=%.200s  port=%d/tcp addr=%s port=%s/tcp",
-		client_session_id, t3buf, t1buf, t2buf, get_remote_ipaddr(), get_remote_port(), n_ntop, 
+		client_session_id, t3buf, t1buf, t2buf, ssh_remote_ipaddr(ssh), ssh_remote_port(ssh), n_ntop, 
 		n_port);
 */
 	free(t1buf);
