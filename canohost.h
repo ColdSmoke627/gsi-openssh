@@ -23,4 +23,6 @@ int		get_local_port(int);
 
 #endif /* _CANOHOST_H */
 
+void		 resolve_localhost(char **host);
+
 void		 ipv64_normalise_mapped(struct sockaddr_storage *, socklen_t *);

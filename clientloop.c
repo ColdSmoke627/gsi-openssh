@@ -114,6 +114,10 @@
 #include "ssherr.h"
 #include "hostfile.h"
 
+#ifdef GSSAPI
+#include "ssh-gss.h"
+#endif
+
 /* import options */
 extern Options options;
 
@@ -316,6 +320,10 @@ client_x11_get_proto(const char *display, const char *xauth_path,
 	struct stat st;
 	u_int now, x11_timeout_real;
 
+#if __APPLE__
+        int is_path_to_socket = 0;
+#endif /* __APPLE__ */
+
 	*_proto = proto;
 	*_data = data;
 	proto[0] = data[0] = xauthfile[0] = xauthdir[0] = '\0';
@@ -332,6 +340,34 @@ client_x11_get_proto(const char *display, const char *xauth_path,
 	}
 
 	if (xauth_path != NULL) {
+#if __APPLE__
+               {
+                       /*
+                        * If using launchd socket, remove the screen number from the end
+                        * of $DISPLAY. is_path_to_socket is used later in this function
+                        * to determine if an error should be displayed.
+                        */
+                       char path[PATH_MAX];
+                       struct stat sbuf;
+
+                       strlcpy(path, display, sizeof(path));
+                       if (0 == stat(path, &sbuf)) {
+                               is_path_to_socket = 1;
+                       } else {
+                               char *dot = strrchr(path, '.');
+                               if (dot) {
+                                       *dot = '\0';
+                                       /* screen = atoi(dot + 1); */
+                                       if (0 == stat(path, &sbuf)) {
+                                               is_path_to_socket = 1;
+                                               debug("x11_get_proto: $DISPLAY is launchd, removing screennum");
+                                               setenv("DISPLAY", path, 1);
+                                       }
+                               }
+                       }
+               }
+#endif /* __APPLE__ */
+
 		/*
 		 * Handle FamilyLocal case where $DISPLAY does
 		 * not match an authorization entry.  For this we
@@ -441,6 +477,9 @@ client_x11_get_proto(const char *display, const char *xauth_path,
 	if (!got_data) {
 		u_int32_t rnd = 0;
 
+#if __APPLE__
+		if (!is_path_to_socket)
+#endif /* __APPLE__ */
 		logit("Warning: No xauth data; "
 		    "using fake authentication data for X11 forwarding.");
 		strlcpy(proto, SSH_X11_PROTO, sizeof proto);
@@ -1666,8 +1705,17 @@ client_loop(int have_pty, int escape_char_arg, int ssh2_chan_id)
 			break;
 
 		/* Do channel operations unless rekeying in progress. */
-		if (!ssh_packet_is_rekeying(active_state))
+		if (!ssh_packet_is_rekeying(active_state)) {
 			channel_after_select(readset, writeset);
+
+#ifdef GSSAPI
+			if (options.gss_renewal_rekey &&
+			    ssh_gssapi_credentials_updated((Gssctxt *)GSS_C_NO_CONTEXT)) {
+				debug("credentials updated - forcing rekey");
+				need_rekeying = 1;
+			}
+#endif
+		}
 
 		/* Buffer input from the connection.  */
 		client_process_net_input(readset);

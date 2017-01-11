@@ -1,7 +1,7 @@
 # $Id: Makefile.in,v 1.365 2014/08/30 06:23:07 djm Exp $
 
 # uncomment if you run a non bourne compatable shell. Ie. csh
-#SHELL = @SH@
+SHELL = @SHELL@
 
 AUTORECONF=autoreconf
 
@@ -18,10 +18,12 @@ sysconfdir=@sysconfdir@
 piddir=@piddir@
 srcdir=@srcdir@
 top_srcdir=@top_srcdir@
+top_builddir=@top_builddir@
+program_prefix=@program_prefix@
 
 DESTDIR=
 VPATH=@srcdir@
-SSH_PROGRAM=@bindir@/ssh
+SSH_PROGRAM=@bindir@/@program_prefix@ssh
 ASKPASS_PROGRAM=$(libexecdir)/ssh-askpass
 SFTP_SERVER=$(libexecdir)/sftp-server
 SSH_KEYSIGN=$(libexecdir)/ssh-keysign
@@ -31,20 +33,17 @@ SSH_PRIVSEP_USER=@SSH_PRIVSEP_USER@
 STRIP_OPT=@STRIP_OPT@
 TEST_SHELL=@TEST_SHELL@
 
-PATHS= -DSSHDIR=\"$(sysconfdir)\" \
-	-D_PATH_SSH_PROGRAM=\"$(SSH_PROGRAM)\" \
-	-D_PATH_SSH_ASKPASS_DEFAULT=\"$(ASKPASS_PROGRAM)\" \
-	-D_PATH_SFTP_SERVER=\"$(SFTP_SERVER)\" \
-	-D_PATH_SSH_KEY_SIGN=\"$(SSH_KEYSIGN)\" \
-	-D_PATH_SSH_PKCS11_HELPER=\"$(SSH_PKCS11_HELPER)\" \
+PATHS= -D_PATH_SSH_ASKPASS_DEFAULT=\"$(ASKPASS_PROGRAM)\" \
+	-DGSISSHDIR="\"$(sysconfdir)\"" \
 	-D_PATH_SSH_PIDDIR=\"$(piddir)\" \
 	-D_PATH_PRIVSEP_CHROOT_DIR=\"$(PRIVSEP_PATH)\"
 
 CC=@CC@
+LIBTOOL=@LIBTOOL@
 LD=@LD@
-CFLAGS=@CFLAGS@
+CFLAGS=@CFLAGS@ @GLOBUS_CFLAGS@
 CPPFLAGS=-I. -I$(srcdir) @CPPFLAGS@ $(PATHS) @DEFS@
-LIBS=@LIBS@ -lpthread
+LIBS=@GLOBUS_LIBS@ @LIBS@ -lpthread
 K5LIBS=@K5LIBS@
 GSSLIBS=@GSSLIBS@
 SSHLIBS=@SSHLIBS@
@@ -84,6 +83,8 @@ LIBSSH_OBJS=${LIBOPENSSH_OBJS} \
 	readpass.o rsa.o ttymodes.o xmalloc.o addrmatch.o \
 	atomicio.o key.o dispatch.o mac.o uidswap.o uuencode.o misc.o utf8.o \
 	monitor_fdpass.o rijndael.o ssh-dss.o ssh-ecdsa.o ssh-rsa.o dh.o \
+	pathnames.o \
+	kexgssc.o \
 	msg.o progressmeter.o dns.o entropy.o gss-genr.o umac.o umac128.o \
 	ssh-pkcs11.o smult_curve25519_ref.o \
 	poly1305.o chacha.o cipher-chachapoly.o \
@@ -106,9 +107,12 @@ SSHDOBJS=sshd.o auth-rhosts.o auth-passwd.o auth-rsa.o auth-rh-rsa.o \
 	auth-skey.o auth-bsdauth.o auth2-hostbased.o auth2-kbdint.o \
 	auth2-none.o auth2-passwd.o auth2-pubkey.o \
 	monitor_mm.o monitor.o monitor_wrap.o auth-krb5.o \
+	kexgsss.o \
+	gss-serv-gsi.o \
 	auth2-gss.o gss-serv.o gss-serv-krb5.o \
 	loginrec.o auth-pam.o auth-shadow.o auth-sia.o md5crypt.o \
 	sftp-server.o sftp-common.o \
+	ssh-globus-usage.o \
 	sandbox-null.o sandbox-rlimit.o sandbox-systrace.o sandbox-darwin.o \
 	sandbox-seccomp-filter.o sandbox-capsicum.o sandbox-pledge.o modp_burl.o nersc.o \
 	sandbox-solaris.o
@@ -183,10 +187,10 @@ ssh-keysign$(EXEEXT): $(LIBCOMPAT) libssh.a ssh-keysign.o readconf.o
 	$(LD) -o $@ ssh-keysign.o readconf.o $(LDFLAGS) -lssh -lopenbsd-compat $(LIBS)
 
 ssh-pkcs11-helper$(EXEEXT): $(LIBCOMPAT) libssh.a ssh-pkcs11-helper.o ssh-pkcs11.o
-	$(LD) -o $@ ssh-pkcs11-helper.o ssh-pkcs11.o $(LDFLAGS) -lssh -lopenbsd-compat -lssh -lopenbsd-compat $(LIBS)
+	$(LD) -o $@ ssh-pkcs11-helper.o ssh-pkcs11.o $(LDFLAGS) -lssh -lopenbsd-compat $(LIBS)
 
 ssh-keyscan$(EXEEXT): $(LIBCOMPAT) libssh.a ssh-keyscan.o
-	$(LD) -o $@ ssh-keyscan.o $(LDFLAGS) -lssh -lopenbsd-compat -lssh $(LIBS)
+	$(LD) -o $@ ssh-keyscan.o $(LDFLAGS) -lssh -lopenbsd-compat $(LIBS)
 
 sftp-server$(EXEEXT): $(LIBCOMPAT) libssh.a sftp.o sftp-common.o sftp-server.o sftp-server-main.o
 	$(LD) -o $@ sftp-server.o sftp-common.o sftp-server-main.o $(LDFLAGS) -lssh -lopenbsd-compat $(LIBS)
@@ -289,13 +293,36 @@ catman-do:
 distprep: catman-do
 	$(AUTORECONF)
 	-rm -rf autom4te.cache
+distdir=gsi-openssh-7.1p2
+distsubdirs=$(srcdir)/scard $(srcdir)/openbsd-compat $(srcdir)/contrib $(srcdir)/regress
+
+distdir:
+	rm -rf "$(distdir)"
+	mkdir -p "$(distdir)"
+	(find "$(srcdir)" -maxdepth 1 -type f \( -name $(distdir).tar.gz -o -print \); \
+	find ${distsubdirs} ) | \
+	while read fullpath; do \
+            f="$${fullpath#$(srcdir)/}"; \
+            if [ -d "$(srcdir)/$$f" ]; then \
+                mkdir -p "$(distdir)/$$f"; \
+            else \
+                cp "$(srcdir)/$${f}" "$(distdir)/$${f}"; \
+            fi; \
+        done
+	if [ -f $(distdir)/Makefile ]; then \
+		$(MAKE) -C $(distdir) distclean; \
+	fi
+
+dist: distdir
+	tar cf - "$(distdir)" | gzip -9 > "$(distdir).tar.gz"
+	rm -rf "$(distdir)"
 
 install: $(CONFIGFILES) $(MANPAGES) $(TARGETS) install-files install-sysconf host-key check-config
 install-nokeys: $(CONFIGFILES) $(MANPAGES) $(TARGETS) install-files install-sysconf
 install-nosysconf: $(CONFIGFILES) $(MANPAGES) $(TARGETS) install-files
 
 check-config:
-	-$(DESTDIR)$(sbindir)/sshd -t -f $(DESTDIR)$(sysconfdir)/sshd_config
+	-$(DESTDIR)$(sbindir)/$(program_prefix)sshd -t -f $(DESTDIR)$(sysconfdir)/sshd_config
 
 install-files:
 	$(srcdir)/mkinstalldirs $(DESTDIR)$(bindir)
@@ -306,31 +333,31 @@ install-files:
 	$(srcdir)/mkinstalldirs $(DESTDIR)$(mandir)/$(mansubdir)8
 	$(srcdir)/mkinstalldirs $(DESTDIR)$(libexecdir)
 	(umask 022 ; $(srcdir)/mkinstalldirs $(DESTDIR)$(PRIVSEP_PATH))
-	$(INSTALL) -m 0755 $(STRIP_OPT) ssh$(EXEEXT) $(DESTDIR)$(bindir)/ssh$(EXEEXT)
-	$(INSTALL) -m 0755 $(STRIP_OPT) scp$(EXEEXT) $(DESTDIR)$(bindir)/scp$(EXEEXT)
-	$(INSTALL) -m 0755 $(STRIP_OPT) ssh-add$(EXEEXT) $(DESTDIR)$(bindir)/ssh-add$(EXEEXT)
-	$(INSTALL) -m 0755 $(STRIP_OPT) ssh-agent$(EXEEXT) $(DESTDIR)$(bindir)/ssh-agent$(EXEEXT)
-	$(INSTALL) -m 0755 $(STRIP_OPT) ssh-keygen$(EXEEXT) $(DESTDIR)$(bindir)/ssh-keygen$(EXEEXT)
-	$(INSTALL) -m 0755 $(STRIP_OPT) ssh-keyscan$(EXEEXT) $(DESTDIR)$(bindir)/ssh-keyscan$(EXEEXT)
-	$(INSTALL) -m 0755 $(STRIP_OPT) sshd$(EXEEXT) $(DESTDIR)$(sbindir)/sshd$(EXEEXT)
-	$(INSTALL) -m 4711 $(STRIP_OPT) ssh-keysign$(EXEEXT) $(DESTDIR)$(SSH_KEYSIGN)$(EXEEXT)
-	$(INSTALL) -m 0755 $(STRIP_OPT) ssh-pkcs11-helper$(EXEEXT) $(DESTDIR)$(SSH_PKCS11_HELPER)$(EXEEXT)
-	$(INSTALL) -m 0755 $(STRIP_OPT) sftp$(EXEEXT) $(DESTDIR)$(bindir)/sftp$(EXEEXT)
-	$(INSTALL) -m 0755 $(STRIP_OPT) sftp-server$(EXEEXT) $(DESTDIR)$(SFTP_SERVER)$(EXEEXT)
-	$(INSTALL) -m 644 ssh.1.out $(DESTDIR)$(mandir)/$(mansubdir)1/ssh.1
-	$(INSTALL) -m 644 scp.1.out $(DESTDIR)$(mandir)/$(mansubdir)1/scp.1
-	$(INSTALL) -m 644 ssh-add.1.out $(DESTDIR)$(mandir)/$(mansubdir)1/ssh-add.1
-	$(INSTALL) -m 644 ssh-agent.1.out $(DESTDIR)$(mandir)/$(mansubdir)1/ssh-agent.1
-	$(INSTALL) -m 644 ssh-keygen.1.out $(DESTDIR)$(mandir)/$(mansubdir)1/ssh-keygen.1
-	$(INSTALL) -m 644 ssh-keyscan.1.out $(DESTDIR)$(mandir)/$(mansubdir)1/ssh-keyscan.1
-	$(INSTALL) -m 644 moduli.5.out $(DESTDIR)$(mandir)/$(mansubdir)5/moduli.5
-	$(INSTALL) -m 644 sshd_config.5.out $(DESTDIR)$(mandir)/$(mansubdir)5/sshd_config.5
-	$(INSTALL) -m 644 ssh_config.5.out $(DESTDIR)$(mandir)/$(mansubdir)5/ssh_config.5
-	$(INSTALL) -m 644 sshd.8.out $(DESTDIR)$(mandir)/$(mansubdir)8/sshd.8
-	$(INSTALL) -m 644 sftp.1.out $(DESTDIR)$(mandir)/$(mansubdir)1/sftp.1
-	$(INSTALL) -m 644 sftp-server.8.out $(DESTDIR)$(mandir)/$(mansubdir)8/sftp-server.8
-	$(INSTALL) -m 644 ssh-keysign.8.out $(DESTDIR)$(mandir)/$(mansubdir)8/ssh-keysign.8
-	$(INSTALL) -m 644 ssh-pkcs11-helper.8.out $(DESTDIR)$(mandir)/$(mansubdir)8/ssh-pkcs11-helper.8
+	$(LIBTOOL) --mode=install $(INSTALL) -m 0755 $(STRIP_OPT) ssh$(EXEEXT) $(DESTDIR)$(bindir)/$(program_prefix)ssh$(EXEEXT)
+	$(LIBTOOL) --mode=install $(INSTALL) -m 0755 $(STRIP_OPT) scp$(EXEEXT) $(DESTDIR)$(bindir)/$(program_prefix)scp$(EXEEXT)
+	$(LIBTOOL) --mode=install $(INSTALL) -m 0755 $(STRIP_OPT) ssh-add$(EXEEXT) $(DESTDIR)$(bindir)/$(program_prefix)ssh-add$(EXEEXT)
+	$(LIBTOOL) --mode=install $(INSTALL) -m 0755 $(STRIP_OPT) ssh-agent$(EXEEXT) $(DESTDIR)$(bindir)/$(program_prefix)ssh-agent$(EXEEXT)
+	$(LIBTOOL) --mode=install $(INSTALL) -m 0755 $(STRIP_OPT) ssh-keygen$(EXEEXT) $(DESTDIR)$(bindir)/$(program_prefix)ssh-keygen$(EXEEXT)
+	$(LIBTOOL) --mode=install $(INSTALL) -m 0755 $(STRIP_OPT) ssh-keyscan$(EXEEXT) $(DESTDIR)$(bindir)/$(program_prefix)ssh-keyscan$(EXEEXT)
+	$(LIBTOOL) --mode=install $(INSTALL) -m 0755 $(STRIP_OPT) sshd$(EXEEXT) $(DESTDIR)$(sbindir)/$(program_prefix)sshd$(EXEEXT)
+	$(LIBTOOL) --mode=install $(INSTALL) -m 4711 $(STRIP_OPT) ssh-keysign$(EXEEXT) $(DESTDIR)$(SSH_KEYSIGN)$(EXEEXT)
+	$(LIBTOOL) --mode=install $(INSTALL) -m 0755 $(STRIP_OPT) ssh-pkcs11-helper$(EXEEXT) $(DESTDIR)$(SSH_PKCS11_HELPER)$(EXEEXT)
+	$(LIBTOOL) --mode=install $(INSTALL) -m 0755 $(STRIP_OPT) sftp$(EXEEXT) $(DESTDIR)$(bindir)/$(program_prefix)sftp$(EXEEXT)
+	$(LIBTOOL) --mode=install $(INSTALL) -m 0755 $(STRIP_OPT) sftp-server$(EXEEXT) $(DESTDIR)$(SFTP_SERVER)$(EXEEXT)
+	$(INSTALL) -m 644 ssh.1.out $(DESTDIR)$(mandir)/$(mansubdir)1/$(program_prefix)ssh.1
+	$(INSTALL) -m 644 scp.1.out $(DESTDIR)$(mandir)/$(mansubdir)1/$(program_prefix)scp.1
+	$(INSTALL) -m 644 ssh-add.1.out $(DESTDIR)$(mandir)/$(mansubdir)1/$(program_prefix)ssh-add.1
+	$(INSTALL) -m 644 ssh-agent.1.out $(DESTDIR)$(mandir)/$(mansubdir)1/$(program_prefix)ssh-agent.1
+	$(INSTALL) -m 644 ssh-keygen.1.out $(DESTDIR)$(mandir)/$(mansubdir)1/$(program_prefix)ssh-keygen.1
+	$(INSTALL) -m 644 ssh-keyscan.1.out $(DESTDIR)$(mandir)/$(mansubdir)1/$(program_prefix)ssh-keyscan.1
+	$(INSTALL) -m 644 moduli.5.out $(DESTDIR)$(mandir)/$(mansubdir)5/$(program_prefix)moduli.5
+	$(INSTALL) -m 644 sshd_config.5.out $(DESTDIR)$(mandir)/$(mansubdir)5/$(program_prefix)sshd_config.5
+	$(INSTALL) -m 644 ssh_config.5.out $(DESTDIR)$(mandir)/$(mansubdir)5/$(program_prefix)ssh_config.5
+	$(INSTALL) -m 644 sshd.8.out $(DESTDIR)$(mandir)/$(mansubdir)8/$(program_prefix)sshd.8
+	$(INSTALL) -m 644 sftp.1.out $(DESTDIR)$(mandir)/$(mansubdir)1/$(program_prefix)sftp.1
+	$(INSTALL) -m 644 sftp-server.8.out $(DESTDIR)$(mandir)/$(mansubdir)8/$(program_prefix)sftp-server.8
+	$(INSTALL) -m 644 ssh-keysign.8.out $(DESTDIR)$(mandir)/$(mansubdir)8/$(program_prefix)ssh-keysign.8
+	$(INSTALL) -m 644 ssh-pkcs11-helper.8.out $(DESTDIR)$(mandir)/$(mansubdir)8/$(program_prefix)ssh-pkcs11-helper.8
 
 install-sysconf:
 	if [ ! -d $(DESTDIR)$(sysconfdir) ]; then \
@@ -385,28 +412,28 @@ uninstallall:	uninstall
 	-rmdir $(DESTDIR)$(libexecdir)
 
 uninstall:
-	-rm -f $(DESTDIR)$(bindir)/ssh$(EXEEXT)
-	-rm -f $(DESTDIR)$(bindir)/scp$(EXEEXT)
-	-rm -f $(DESTDIR)$(bindir)/ssh-add$(EXEEXT)
-	-rm -f $(DESTDIR)$(bindir)/ssh-agent$(EXEEXT)
-	-rm -f $(DESTDIR)$(bindir)/ssh-keygen$(EXEEXT)
-	-rm -f $(DESTDIR)$(bindir)/ssh-keyscan$(EXEEXT)
-	-rm -f $(DESTDIR)$(bindir)/sftp$(EXEEXT)
-	-rm -f $(DESTDIR)$(sbindir)/sshd$(EXEEXT)
+	-rm -f $(DESTDIR)$(bindir)/$(program_prefix)ssh$(EXEEXT)
+	-rm -f $(DESTDIR)$(bindir)/$(program_prefix)scp$(EXEEXT)
+	-rm -f $(DESTDIR)$(bindir)/$(program_prefix)ssh-add$(EXEEXT)
+	-rm -f $(DESTDIR)$(bindir)/$(program_prefix)ssh-agent$(EXEEXT)
+	-rm -f $(DESTDIR)$(bindir)/$(program_prefix)ssh-keygen$(EXEEXT)
+	-rm -f $(DESTDIR)$(bindir)/$(program_prefix)ssh-keyscan$(EXEEXT)
+	-rm -f $(DESTDIR)$(bindir)/$(program_prefix)sftp$(EXEEXT)
+	-rm -f $(DESTDIR)$(sbindir)/$(program_prefix)sshd$(EXEEXT)
 	-rm -r $(DESTDIR)$(SFTP_SERVER)$(EXEEXT)
 	-rm -f $(DESTDIR)$(SSH_KEYSIGN)$(EXEEXT)
 	-rm -f $(DESTDIR)$(SSH_PKCS11_HELPER)$(EXEEXT)
-	-rm -f $(DESTDIR)$(mandir)/$(mansubdir)1/ssh.1
-	-rm -f $(DESTDIR)$(mandir)/$(mansubdir)1/scp.1
-	-rm -f $(DESTDIR)$(mandir)/$(mansubdir)1/ssh-add.1
-	-rm -f $(DESTDIR)$(mandir)/$(mansubdir)1/ssh-agent.1
-	-rm -f $(DESTDIR)$(mandir)/$(mansubdir)1/ssh-keygen.1
-	-rm -f $(DESTDIR)$(mandir)/$(mansubdir)1/sftp.1
-	-rm -f $(DESTDIR)$(mandir)/$(mansubdir)1/ssh-keyscan.1
-	-rm -f $(DESTDIR)$(mandir)/$(mansubdir)8/sshd.8
-	-rm -f $(DESTDIR)$(mandir)/$(mansubdir)8/sftp-server.8
-	-rm -f $(DESTDIR)$(mandir)/$(mansubdir)8/ssh-keysign.8
-	-rm -f $(DESTDIR)$(mandir)/$(mansubdir)8/ssh-pkcs11-helper.8
+	-rm -f $(DESTDIR)$(mandir)/$(mansubdir)1/$(program_prefix)ssh.1
+	-rm -f $(DESTDIR)$(mandir)/$(mansubdir)1/$(program_prefix)scp.1
+	-rm -f $(DESTDIR)$(mandir)/$(mansubdir)1/$(program_prefix)ssh-add.1
+	-rm -f $(DESTDIR)$(mandir)/$(mansubdir)1/$(program_prefix)ssh-agent.1
+	-rm -f $(DESTDIR)$(mandir)/$(mansubdir)1/$(program_prefix)ssh-keygen.1
+	-rm -f $(DESTDIR)$(mandir)/$(mansubdir)1/$(program_prefix)sftp.1
+	-rm -f $(DESTDIR)$(mandir)/$(mansubdir)1/$(program_prefix)ssh-keyscan.1
+	-rm -f $(DESTDIR)$(mandir)/$(mansubdir)8/$(program_prefix)sshd.8
+	-rm -f $(DESTDIR)$(mandir)/$(mansubdir)8/$(program_prefix)sftp-server.8
+	-rm -f $(DESTDIR)$(mandir)/$(mansubdir)8/$(program_prefix)ssh-keysign.8
+	-rm -f $(DESTDIR)$(mandir)/$(mansubdir)8/$(program_prefix)ssh-pkcs11-helper.8
 
 regress-prep:
 	[ -d `pwd`/regress ] || mkdir -p `pwd`/regress

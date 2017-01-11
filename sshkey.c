@@ -95,6 +95,9 @@ static const struct keytype keytypes[] = {
 	{ "rsa-sha2-256", "RSA", KEY_RSA, 0, 0, 1 },
 	{ "rsa-sha2-512", "RSA", KEY_RSA, 0, 0, 1 },
 	{ "ssh-dss", "DSA", KEY_DSA, 0, 0, 0 },
+#ifdef GSSAPI
+	{ "null", "null", KEY_NULL, 0, 0, 0 }, /* 'null' host key alg for GSSAPI */
+#endif
 # ifdef OPENSSL_HAS_ECC
 	{ "ecdsa-sha2-nistp256", "ECDSA", KEY_ECDSA, NID_X9_62_prime256v1, 0, 0 },
 	{ "ecdsa-sha2-nistp384", "ECDSA", KEY_ECDSA, NID_secp384r1, 0, 0 },
