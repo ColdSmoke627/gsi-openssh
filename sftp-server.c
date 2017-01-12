@@ -1575,9 +1575,11 @@ process(void)
 		}
 		if (handlers[i].handler == NULL)
 #ifdef NERSC_MOD
-		s_audit("sftp_process_unknown_3", "count=%i int=%d uristring=%d",
-			get_client_session_id(), (int)getppid(), type);
+		{
+			s_audit("sftp_process_unknown_3", "count=%i int=%d uristring=%d",
+				get_client_session_id(), (int)getppid(), type);
 			error("Unknown message %u", type);
+		}
 #else
 			error("Unknown message %u", type);
 #endif
