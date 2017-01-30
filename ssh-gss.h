@@ -75,6 +75,9 @@
 #define SSH2_MSG_KEXGSS_GROUP				41
 #define KEX_GSS_GRP1_SHA1_ID				"gss-group1-sha1-"
 #define KEX_GSS_GRP14_SHA1_ID				"gss-group14-sha1-"
+#define KEX_GSS_GRP14_SHA256_ID				"gss-group14-sha256-"
+#define KEX_GSS_GRP16_SHA512_ID				"gss-group16-sha512-"
+#define KEX_GSS_GRP18_SHA512_ID				"gss-group18-sha512-"
 #define KEX_GSS_GEX_SHA1_ID				"gss-gex-sha1-"
 
 typedef struct {

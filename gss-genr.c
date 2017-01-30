@@ -135,16 +135,28 @@ ssh_gssapi_kex_mechs(gss_OID_set gss_supported, ssh_gssapi_check_fn *check,
 			if (oidpos != 0)
 				buffer_put_char(&buf, ',');
 
+			buffer_append(&buf, KEX_GSS_GRP16_SHA512_ID,
+			    sizeof(KEX_GSS_GRP16_SHA512_ID) - 1);
+			buffer_append(&buf, encoded, enclen);
+			buffer_put_char(&buf, ',');
+			buffer_append(&buf, KEX_GSS_GRP18_SHA512_ID,
+			    sizeof(KEX_GSS_GRP18_SHA512_ID) - 1);
+			buffer_append(&buf, encoded, enclen);
+			buffer_put_char(&buf, ',');
 			buffer_append(&buf, KEX_GSS_GEX_SHA1_ID,
 			    sizeof(KEX_GSS_GEX_SHA1_ID) - 1);
 			buffer_append(&buf, encoded, enclen);
 			buffer_put_char(&buf, ',');
-			buffer_append(&buf, KEX_GSS_GRP1_SHA1_ID, 
-			    sizeof(KEX_GSS_GRP1_SHA1_ID) - 1);
+			buffer_append(&buf, KEX_GSS_GRP14_SHA256_ID,
+			    sizeof(KEX_GSS_GRP14_SHA256_ID) - 1);
 			buffer_append(&buf, encoded, enclen);
 			buffer_put_char(&buf, ',');
 			buffer_append(&buf, KEX_GSS_GRP14_SHA1_ID,
 			    sizeof(KEX_GSS_GRP14_SHA1_ID) - 1);
+			buffer_append(&buf, encoded, enclen);
+			buffer_put_char(&buf, ',');
+			buffer_append(&buf, KEX_GSS_GRP1_SHA1_ID, 
+			    sizeof(KEX_GSS_GRP1_SHA1_ID) - 1);
 			buffer_append(&buf, encoded, enclen);
 
 			gss_enc2oid[oidpos].oid = &(gss_supported->elements[i]);
@@ -183,6 +195,21 @@ ssh_gssapi_id_kex(Gssctxt *ctx, char *name, int kex_type) {
 		if (strlen(name) < sizeof(KEX_GSS_GRP14_SHA1_ID))
 			return GSS_C_NO_OID;
 		name += sizeof(KEX_GSS_GRP14_SHA1_ID) - 1;
+		break;
+	case KEX_GSS_GRP14_SHA256:
+		if (strlen(name) < sizeof(KEX_GSS_GRP14_SHA256_ID))
+			return GSS_C_NO_OID;
+		name += sizeof(KEX_GSS_GRP14_SHA256_ID) - 1;
+		break;
+	case KEX_GSS_GRP16_SHA512:
+		if (strlen(name) < sizeof(KEX_GSS_GRP16_SHA512_ID))
+			return GSS_C_NO_OID;
+		name += sizeof(KEX_GSS_GRP16_SHA512_ID) - 1;
+		break;
+	case KEX_GSS_GRP18_SHA512:
+		if (strlen(name) < sizeof(KEX_GSS_GRP18_SHA512_ID))
+			return GSS_C_NO_OID;
+		name += sizeof(KEX_GSS_GRP18_SHA512_ID) - 1;
 		break;
 	case KEX_GSS_GEX_SHA1:
 		if (strlen(name) < sizeof(KEX_GSS_GEX_SHA1_ID))

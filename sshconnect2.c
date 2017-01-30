@@ -262,6 +262,9 @@ ssh_kex2(char *host, struct sockaddr *hostaddr, u_short port)
 	if (options.gss_keyex) {
 		kex->kex[KEX_GSS_GRP1_SHA1] = kexgss_client;
 		kex->kex[KEX_GSS_GRP14_SHA1] = kexgss_client;
+		kex->kex[KEX_GSS_GRP14_SHA256] = kexgss_client;
+		kex->kex[KEX_GSS_GRP16_SHA512] = kexgss_client;
+		kex->kex[KEX_GSS_GRP18_SHA512] = kexgss_client;
 		kex->kex[KEX_GSS_GEX_SHA1] = kexgss_client;
 	}
 #endif

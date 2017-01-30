@@ -725,6 +725,24 @@ choose_kex(struct kex *k, char *client, char *server)
         k->hash_alg = SSH_DIGEST_SHA1;
         return 0; /* gss-group14-sha1-* */
     }
+    if (strncmp(k->name, KEX_GSS_GRP14_SHA256_ID,
+	    sizeof(KEX_GSS_GRP14_SHA256_ID) - 1) == 0) {
+		k->kex_type = KEX_GSS_GRP14_SHA256;
+        k->hash_alg = SSH_DIGEST_SHA256;
+        return 0; /* gss-group14-sha256-* */
+    }
+    if (strncmp(k->name, KEX_GSS_GRP16_SHA512_ID,
+	    sizeof(KEX_GSS_GRP16_SHA512_ID) - 1) == 0) {
+		k->kex_type = KEX_GSS_GRP16_SHA512;
+        k->hash_alg = SSH_DIGEST_SHA512;
+        return 0; /* gss-group16-sha512-* */
+    }
+    if (strncmp(k->name, KEX_GSS_GRP18_SHA512_ID,
+	    sizeof(KEX_GSS_GRP18_SHA512_ID) - 1) == 0) {
+		k->kex_type = KEX_GSS_GRP18_SHA512;
+        k->hash_alg = SSH_DIGEST_SHA512;
+        return 0; /* gss-group18-sha512-* */
+    }
 #endif
 	if ((kexalg = kex_alg_by_name(k->name)) == NULL)
 		return SSH_ERR_INTERNAL_ERROR;

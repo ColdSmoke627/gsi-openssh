@@ -2948,6 +2948,9 @@ do_ssh2_kex(void)
 	if (options.gss_keyex) {
 		kex->kex[KEX_GSS_GRP1_SHA1] = kexgss_server;
 		kex->kex[KEX_GSS_GRP14_SHA1] = kexgss_server;
+		kex->kex[KEX_GSS_GRP14_SHA256] = kexgss_server;
+		kex->kex[KEX_GSS_GRP16_SHA512] = kexgss_server;
+		kex->kex[KEX_GSS_GRP18_SHA512] = kexgss_server;
 		kex->kex[KEX_GSS_GEX_SHA1] = kexgss_server;
 	}
 #endif
