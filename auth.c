@@ -329,11 +329,9 @@ auth_log(Authctxt *authctxt, int authenticated, int partial,
 	char* t2buf = encode_string(method, strlen(method) );
 	char* t3buf = encode_string(authmsg, strlen(authmsg) );
 
-/* TODO
 	s_audit("auth_info_3", "count=%i uristring=%s uristring=%s uristring=%s addr=%.200s  port=%d/tcp addr=%s port=%s/tcp",
 		client_session_id, t3buf, t1buf, t2buf, ssh_remote_ipaddr(ssh), ssh_remote_port(ssh), n_ntop, 
 		n_port);
-*/
 	free(t1buf);
 	free(t2buf);
 	free(t3buf);
