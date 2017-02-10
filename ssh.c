@@ -559,6 +559,10 @@ main(int ac, char **av)
 	sanitise_stdfd();
 
 	__progname = ssh_get_progname(av[0]);
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+	SSLeay_add_all_algorithms();
+#endif
+
 	init_pathnames();
 
 #ifndef HAVE_SETPROCTITLE
@@ -1265,6 +1269,7 @@ main(int ac, char **av)
 		free(cp);
 	}
 	free(conn_hash_hex);
+	free(host_arg);
 
 	if (config_test) {
 		dump_client_config(&options, host);

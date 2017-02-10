@@ -75,6 +75,7 @@ auth_rsa_generate_challenge(Key *key)
 {
 	BIGNUM *challenge;
 	BN_CTX *ctx;
+	const BIGNUM *n;
 
 	if ((challenge = BN_new()) == NULL)
 		fatal("auth_rsa_generate_challenge: BN_new() failed");
@@ -83,7 +84,8 @@ auth_rsa_generate_challenge(Key *key)
 		fatal("auth_rsa_generate_challenge: BN_rand failed");
 	if ((ctx = BN_CTX_new()) == NULL)
 		fatal("auth_rsa_generate_challenge: BN_CTX_new failed");
-	if (BN_mod(challenge, challenge, key->rsa->n, ctx) == 0)
+	RSA_get0_key(key->rsa, &n, NULL, NULL);
+	if (BN_mod(challenge, challenge, n, ctx) == 0)
 		fatal("auth_rsa_generate_challenge: BN_mod failed");
 	BN_CTX_free(ctx);
 
@@ -96,12 +98,14 @@ auth_rsa_verify_response(Key *key, BIGNUM *challenge, u_char response[16])
 	u_char buf[32], mdbuf[16];
 	struct ssh_digest_ctx *md;
 	int len;
+	const BIGNUM *n;
 
 	/* don't allow short keys */
-	if (BN_num_bits(key->rsa->n) < SSH_RSA_MINIMUM_MODULUS_SIZE) {
+	RSA_get0_key(key->rsa, &n, NULL, NULL);
+	if (BN_num_bits(n) < SSH_RSA_MINIMUM_MODULUS_SIZE) {
 		error("%s: RSA modulus too small: %d < minimum %d bits",
 		    __func__,
-		    BN_num_bits(key->rsa->n), SSH_RSA_MINIMUM_MODULUS_SIZE);
+		    BN_num_bits(n), SSH_RSA_MINIMUM_MODULUS_SIZE);
 		return (0);
 	}
 
@@ -191,6 +195,7 @@ rsa_key_allowed_in_file(struct passwd *pw, char *file,
 		char *cp;
 		char *key_options;
 		int keybits;
+		const BIGNUM *n;
 
 		/* Skip leading whitespace, empty and comment lines. */
 		for (cp = line; *cp == ' ' || *cp == '\t'; cp++)
@@ -228,15 +233,16 @@ rsa_key_allowed_in_file(struct passwd *pw, char *file,
 		 * Check if the we have found the desired key (identified
 		 * by its modulus).
 		 */
-		if (BN_cmp(key->rsa->n, client_n) != 0)
+		RSA_get0_key(key->rsa, &n, NULL, NULL);
+		if (BN_cmp(n, client_n) != 0)
 			continue;
 
 		/* check the real bits  */
-		keybits = BN_num_bits(key->rsa->n);
+		keybits = BN_num_bits(n);
 		if (keybits < 0 || bits != keybits)
 			logit("Warning: %s, line %lu: keysize mismatch: "
 			    "actual %d vs. announced %d.",
-			    file, linenum, BN_num_bits(key->rsa->n), bits);
+			    file, linenum, BN_num_bits(n), bits);
 
 		if ((fp = sshkey_fingerprint(key, options.fingerprint_hash,
 		    SSH_FP_DEFAULT)) == NULL)

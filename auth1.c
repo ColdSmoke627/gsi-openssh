@@ -182,6 +182,7 @@ auth1_process_rhosts_rsa(Authctxt *authctxt)
 	u_int bits;
 	Key *client_host_key;
 	u_int ulen;
+	BIGNUM *n = NULL, *e = NULL;
 
 	/*
 	 * Get client user name.  Note that we just have to
@@ -193,14 +194,17 @@ auth1_process_rhosts_rsa(Authctxt *authctxt)
 	/* Get the client host key. */
 	client_host_key = key_new(KEY_RSA1);
 	bits = packet_get_int();
-	packet_get_bignum(client_host_key->rsa->e);
-	packet_get_bignum(client_host_key->rsa->n);
+	if( (n = BN_new()) == NULL || (e = BN_new()) == NULL)
+		return 0;
+	packet_get_bignum(e);
+	packet_get_bignum(n);
+	RSA_set0_key(client_host_key->rsa, n, e, NULL);
 
-	keybits = BN_num_bits(client_host_key->rsa->n);
+	keybits = BN_num_bits(n);
 	if (keybits < 0 || bits != (u_int)keybits) {
 		verbose("Warning: keysize mismatch for client_host_key: "
 		    "actual %d, announced %d",
-		    BN_num_bits(client_host_key->rsa->n), bits);
+		    BN_num_bits(n), bits);
 	}
 	packet_check_eom();
 

@@ -80,6 +80,7 @@ kexgss_server(struct ssh *ssh)
 	int type = 0;
 	gss_OID oid;
 	char *mechs = NULL;
+	const BIGNUM *p, *g, *pub_key;
 
 	/* Initialise GSSAPI */
 
@@ -136,9 +137,10 @@ kexgss_server(struct ssh *ssh)
 		if (dh == NULL)
 			packet_disconnect("Protocol error: no matching group found");
 
+		DH_get0_pqg(dh, &p, NULL, &g);
 		packet_start(SSH2_MSG_KEXGSS_GROUP);
-		packet_put_bignum2(dh->p);
-		packet_put_bignum2(dh->g);
+		packet_put_bignum2((BIGNUM *)p);
+		packet_put_bignum2((BIGNUM *)g);
 		packet_send();
 
 		packet_write_wait();
@@ -231,6 +233,7 @@ kexgss_server(struct ssh *ssh)
 	memset(kbuf, 0, klen);
 	free(kbuf);
 
+	DH_get0_key(dh, &pub_key, NULL);
 	hashlen = sizeof(hash);
 	switch (kex->kex_type) {
 	case KEX_GSS_GRP1_SHA1:
@@ -243,7 +246,7 @@ kexgss_server(struct ssh *ssh)
 		    buffer_ptr(kex->peer), buffer_len(kex->peer),
 		    buffer_ptr(kex->my), buffer_len(kex->my),
 		    NULL, 0, /* Change this if we start sending host keys */
-		    dh_client_pub, dh->pub_key, shared_secret,
+		    dh_client_pub, pub_key, shared_secret,
 		    hash, &hashlen
 		);
 		break;
@@ -255,9 +258,9 @@ kexgss_server(struct ssh *ssh)
 		    buffer_ptr(kex->my), buffer_len(kex->my),
 		    NULL, 0,
 		    cmin, nbits, cmax,
-		    dh->p, dh->g,
+		    p, g,
 		    dh_client_pub,
-		    dh->pub_key,
+		    pub_key,
 		    shared_secret,
 		    hash, &hashlen
 		);
@@ -281,7 +284,7 @@ kexgss_server(struct ssh *ssh)
 		fatal("Couldn't get MIC");
 
 	packet_start(SSH2_MSG_KEXGSS_COMPLETE);
-	packet_put_bignum2(dh->pub_key);
+	packet_put_bignum2((BIGNUM *)pub_key);
 	packet_put_string((char *)msg_tok.value,msg_tok.length);
 
 	if (send_tok.length != 0) {

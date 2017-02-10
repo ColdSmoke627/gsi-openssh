@@ -1097,19 +1097,17 @@ send_rexec_state(int fd, struct sshbuf *conf)
 #ifdef WITH_SSH1
 	if (sensitive_data.server_key != NULL &&
 	    sensitive_data.server_key->type == KEY_RSA1) {
+		const BIGNUM *e, *n, *d, *iqmp, *p, *q;
+		RSA_get0_key(sensitive_data.server_key->rsa, &n, &e, &d);
+		RSA_get0_factors(sensitive_data.server_key->rsa, &p, &q);
+		RSA_get0_crt_params(sensitive_data.server_key->rsa, NULL, NULL, &iqmp);
 		if ((r = sshbuf_put_u32(m, 1)) != 0 ||
-		    (r = sshbuf_put_bignum1(m,
-		    sensitive_data.server_key->rsa->e)) != 0 ||
-		    (r = sshbuf_put_bignum1(m,
-		    sensitive_data.server_key->rsa->n)) != 0 ||
-		    (r = sshbuf_put_bignum1(m,
-		    sensitive_data.server_key->rsa->d)) != 0 ||
-		    (r = sshbuf_put_bignum1(m,
-		    sensitive_data.server_key->rsa->iqmp)) != 0 ||
-		    (r = sshbuf_put_bignum1(m,
-		    sensitive_data.server_key->rsa->p)) != 0 ||
-		    (r = sshbuf_put_bignum1(m,
-		    sensitive_data.server_key->rsa->q)) != 0)
+		    (r = sshbuf_put_bignum1(m, e)) != 0 ||
+		    (r = sshbuf_put_bignum1(m, n)) != 0 ||
+		    (r = sshbuf_put_bignum1(m, d)) != 0 ||
+		    (r = sshbuf_put_bignum1(m, iqmp)) != 0 ||
+		    (r = sshbuf_put_bignum1(m, p)) != 0 ||
+		    (r = sshbuf_put_bignum1(m, q)) != 0)
 			fatal("%s: buffer error: %s", __func__, ssh_err(r));
 	} else
 #endif
@@ -1151,17 +1149,25 @@ recv_rexec_state(int fd, Buffer *conf)
 
 	if (buffer_get_int(&m)) {
 #ifdef WITH_SSH1
+		BIGNUM *e = NULL, *n = NULL, *d = NULL, *iqmp = NULL,
+		    *p = NULL, *q = NULL;
 		if (sensitive_data.server_key != NULL)
 			key_free(sensitive_data.server_key);
+		if ((e = BN_new()) == NULL || (n = BN_new()) == NULL ||
+		    (d = BN_new()) == NULL || (iqmp = BN_new()) == NULL ||
+		    (p = BN_new()) == NULL || (q = BN_new()) == NULL)
+			fatal("BN_new() failed");
 		sensitive_data.server_key = key_new_private(KEY_RSA1);
-		buffer_get_bignum(&m, sensitive_data.server_key->rsa->e);
-		buffer_get_bignum(&m, sensitive_data.server_key->rsa->n);
-		buffer_get_bignum(&m, sensitive_data.server_key->rsa->d);
-		buffer_get_bignum(&m, sensitive_data.server_key->rsa->iqmp);
-		buffer_get_bignum(&m, sensitive_data.server_key->rsa->p);
-		buffer_get_bignum(&m, sensitive_data.server_key->rsa->q);
+		buffer_get_bignum(&m, e);
+		buffer_get_bignum(&m, n);
+		buffer_get_bignum(&m, d);
+		buffer_get_bignum(&m, iqmp);
+		buffer_get_bignum(&m, p);
+		buffer_get_bignum(&m, q);
+		RSA_set0_key(sensitive_data.server_key->rsa, n, e, d);
+		RSA_set0_factors(sensitive_data.server_key->rsa, p, q);
 		if (rsa_generate_additional_parameters(
-		    sensitive_data.server_key->rsa) != 0)
+		    sensitive_data.server_key->rsa, iqmp) != 0)
 			fatal("%s: rsa_generate_additional_parameters "
 			    "error", __func__);
 #endif
@@ -1581,8 +1587,9 @@ check_ip_options(struct ssh *ssh)
 #ifdef IP_OPTIONS
 	int sock_in = ssh_packet_get_connection_in(ssh);
 	struct sockaddr_storage from;
-	socklen_t option_size, i, fromlen = sizeof(from);
+	socklen_t i, fromlen = sizeof(from);
 	u_char opts[200];
+	socklen_t option_size = sizeof(opts);
 	char text[sizeof(opts) * 3 + 1];
 
 	memset(&from, 0, sizeof(from));
@@ -1636,6 +1643,7 @@ main(int ac, char **av)
 	(void)set_auth_parameters(ac, av);
 #endif
 	__progname = ssh_get_progname(av[0]);
+	OpenSSL_add_all_algorithms();
 	init_pathnames();
 	config_file_name = _PATH_SERVER_CONFIG_FILE;
 
@@ -2077,6 +2085,7 @@ main(int ac, char **av)
 #ifdef WITH_SSH1
 	/* Check certain values for sanity. */
 	if (options.protocol & SSH_PROTO_1) {
+		const BIGNUM *n;
 		if (options.server_key_bits < SSH_RSA_MINIMUM_MODULUS_SIZE ||
 		    options.server_key_bits > OPENSSL_RSA_MAX_MODULUS_BITS) {
 			fprintf(stderr, "Bad server key size.\n");
@@ -2087,13 +2096,13 @@ main(int ac, char **av)
 		 * is necessary to make double encryption work with rsaref. Oh, I
 		 * hate software patents. I dont know if this can go? Niels
 		 */
+		RSA_get0_key(sensitive_data.ssh1_host_key->rsa, &n, NULL, NULL);
 		if (options.server_key_bits >
-		    BN_num_bits(sensitive_data.ssh1_host_key->rsa->n) -
-		    SSH_KEY_BITS_RESERVED && options.server_key_bits <
-		    BN_num_bits(sensitive_data.ssh1_host_key->rsa->n) +
-		    SSH_KEY_BITS_RESERVED) {
+		    BN_num_bits(n) - SSH_KEY_BITS_RESERVED &&
+		    options.server_key_bits <
+		    BN_num_bits(n) + SSH_KEY_BITS_RESERVED) {
 			options.server_key_bits =
-			    BN_num_bits(sensitive_data.ssh1_host_key->rsa->n) +
+			    BN_num_bits(n) +
 			    SSH_KEY_BITS_RESERVED;
 			debug("Forcing server key to %d bits to make it differ from host key.",
 			    options.server_key_bits);
@@ -2610,18 +2619,18 @@ ssh1_session_key(BIGNUM *session_key_int)
 {
 	struct ssh *ssh = active_state; /* XXX */
 	int rsafail = 0;
+	const BIGNUM *s_n, *h_n;
 
-	if (BN_cmp(sensitive_data.server_key->rsa->n,
-	    sensitive_data.ssh1_host_key->rsa->n) > 0) {
+	RSA_get0_key(sensitive_data.server_key->rsa, &s_n, NULL, NULL);
+	RSA_get0_key(sensitive_data.ssh1_host_key->rsa, &h_n, NULL, NULL);
+	if (BN_cmp(s_n, h_n) > 0) {
 		/* Server key has bigger modulus. */
-		if (BN_num_bits(sensitive_data.server_key->rsa->n) <
-		    BN_num_bits(sensitive_data.ssh1_host_key->rsa->n) +
-		    SSH_KEY_BITS_RESERVED) {
+		if (BN_num_bits(s_n) <
+		    BN_num_bits(h_n) + SSH_KEY_BITS_RESERVED) {
 			fatal("do_connection: %s port %d: "
 			    "server_key %d < host_key %d + SSH_KEY_BITS_RESERVED %d",
 			    ssh_remote_ipaddr(ssh), ssh_remote_port(ssh),
-			    BN_num_bits(sensitive_data.server_key->rsa->n),
-			    BN_num_bits(sensitive_data.ssh1_host_key->rsa->n),
+			    BN_num_bits(s_n), BN_num_bits(h_n),
 			    SSH_KEY_BITS_RESERVED);
 		}
 		if (rsa_private_decrypt(session_key_int, session_key_int,
@@ -2632,14 +2641,14 @@ ssh1_session_key(BIGNUM *session_key_int)
 			rsafail++;
 	} else {
 		/* Host key has bigger modulus (or they are equal). */
-		if (BN_num_bits(sensitive_data.ssh1_host_key->rsa->n) <
-		    BN_num_bits(sensitive_data.server_key->rsa->n) +
+		if (BN_num_bits(h_n) <
+		    BN_num_bits(s_n) +
 		    SSH_KEY_BITS_RESERVED) {
 			fatal("do_connection: %s port %d: "
 			    "host_key %d < server_key %d + SSH_KEY_BITS_RESERVED %d",
 			    ssh_remote_ipaddr(ssh), ssh_remote_port(ssh),
-			    BN_num_bits(sensitive_data.ssh1_host_key->rsa->n),
-			    BN_num_bits(sensitive_data.server_key->rsa->n),
+			    BN_num_bits(h_n),
+			    BN_num_bits(s_n),
 			    SSH_KEY_BITS_RESERVED);
 		}
 		if (rsa_private_decrypt(session_key_int, session_key_int,
@@ -2667,6 +2676,7 @@ do_ssh1_kex(void)
 	size_t fake_key_len;
 	u_char cookie[8];
 	u_int cipher_type, auth_mask, protocol_flags;
+	const BIGNUM *n, *e;
 
 	/*
 	 * Generate check bytes that the client must send back in the user
@@ -2689,14 +2699,16 @@ do_ssh1_kex(void)
 		packet_put_char(cookie[i]);
 
 	/* Store our public server RSA key. */
-	packet_put_int(BN_num_bits(sensitive_data.server_key->rsa->n));
-	packet_put_bignum(sensitive_data.server_key->rsa->e);
-	packet_put_bignum(sensitive_data.server_key->rsa->n);
+	RSA_get0_key(sensitive_data.server_key->rsa, &n, &e, NULL);
+	packet_put_int(BN_num_bits(n));
+	packet_put_bignum((BIGNUM *)e);
+	packet_put_bignum((BIGNUM *)n);
 
 	/* Store our public host RSA key. */
-	packet_put_int(BN_num_bits(sensitive_data.ssh1_host_key->rsa->n));
-	packet_put_bignum(sensitive_data.ssh1_host_key->rsa->e);
-	packet_put_bignum(sensitive_data.ssh1_host_key->rsa->n);
+	RSA_get0_key(sensitive_data.ssh1_host_key->rsa, &n, &e, NULL);
+	packet_put_int(BN_num_bits(n));
+	packet_put_bignum((BIGNUM *)e);
+	packet_put_bignum((BIGNUM *)n);
 
 	/* Put protocol flags. */
 	packet_put_int(SSH_PROTOFLAG_HOST_IN_FWD_OPEN);
@@ -2721,8 +2733,8 @@ do_ssh1_kex(void)
 	packet_write_wait();
 
 	debug("Sent %d bit server key and %d bit host key.",
-	    BN_num_bits(sensitive_data.server_key->rsa->n),
-	    BN_num_bits(sensitive_data.ssh1_host_key->rsa->n));
+	    RSA_bits(sensitive_data.server_key->rsa),
+	    RSA_bits(sensitive_data.ssh1_host_key->rsa));
 
 	/* Read clients reply (cipher type and session key). */
 	packet_read_expect(SSH_CMSG_SESSION_KEY);
@@ -2782,14 +2794,14 @@ do_ssh1_kex(void)
 		    len, (u_long)sizeof(session_key));
 		rsafail++;
 	} else {
+		const BIGNUM *h_n, *s_n;
 		explicit_bzero(session_key, sizeof(session_key));
 		BN_bn2bin(session_key_int,
 		    session_key + sizeof(session_key) - len);
 
-		derive_ssh1_session_id(
-		    sensitive_data.ssh1_host_key->rsa->n,
-		    sensitive_data.server_key->rsa->n,
-		    cookie, session_id);
+		RSA_get0_key(sensitive_data.ssh1_host_key->rsa, &h_n, NULL, NULL);
+		RSA_get0_key(sensitive_data.server_key->rsa, &s_n, NULL, NULL);
+		derive_ssh1_session_id((BIGNUM *)h_n, (BIGNUM *)s_n, cookie, session_id);
 		/*
 		 * Xor the first 16 bytes of the session key with the
 		 * session id.
