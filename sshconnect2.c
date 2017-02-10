@@ -181,8 +181,9 @@ ssh_kex2(char *host, struct sockaddr *hostaddr, u_short port)
 	xxx_host = host;
 	xxx_hostaddr = hostaddr;
 
-	myproposal[PROPOSAL_KEX_ALGS] = compat_kex_proposal(
-	    options.kex_algorithms);
+	if ((s = kex_names_cat(options.kex_algorithms, "ext-info-c")) == NULL)
+		fatal("%s: kex_names_cat", __func__);
+	myproposal[PROPOSAL_KEX_ALGS] = compat_kex_proposal(s);
 
 #ifdef GSSAPI
 	if (options.gss_keyex) {
