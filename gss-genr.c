@@ -388,9 +388,14 @@ ssh_gssapi_init_ctx(Gssctxt *ctx, int deleg_creds, gss_buffer_desc *recv_tok,
 		debug("Delegating credentials");
 	}
 
+	/* Setting GSS_C_CONF_FLAG to get around the issue of SSL_export_keying_material
+	 * not returning correct key material on CentOS6 with OpenSSL 1.0.1e build 48.
+	 * See: https://github.com/globus/globus-toolkit/issues/92
+	 */
+
 	ctx->major = gss_init_sec_context(&ctx->minor,
 	    ctx->client_creds, &ctx->context, ctx->name, ctx->oid,
-	    GSS_C_MUTUAL_FLAG | GSS_C_INTEG_FLAG | deleg_flag,
+	    GSS_C_MUTUAL_FLAG | GSS_C_INTEG_FLAG | GSS_C_CONF_FLAG | deleg_flag,
 	    0, NULL, recv_tok, NULL, send_tok, flags, NULL);
 
 	if (GSS_ERROR(ctx->major))
