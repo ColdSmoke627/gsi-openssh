@@ -16,6 +16,7 @@
 
 #define STRINIT "init_pathnames() not called!"
 
+char *_PATH_SSHDIR			= STRINIT;
 char *_PATH_SSH_SYSTEM_HOSTFILE		= STRINIT;
 char *_PATH_SSH_SYSTEM_HOSTFILE2	= STRINIT;
 char *_PATH_SERVER_CONFIG_FILE		= STRINIT;
@@ -139,6 +140,7 @@ init_pathnames()
     }
 
     /* lots of one time memory leaks here */
+    _PATH_SSHDIR = strdup(sshdir);
     _PATH_SSH_SYSTEM_HOSTFILE	= compose2(sshdir, "/ssh_known_hosts");
     _PATH_SSH_SYSTEM_HOSTFILE2	= compose2(sshdir, "/ssh_known_hosts2");
     _PATH_SERVER_CONFIG_FILE	= compose2(sshdir, "/sshd_config");

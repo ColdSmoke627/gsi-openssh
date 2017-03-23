@@ -1,5 +1,6 @@
-/* $OpenBSD: version.h,v 1.75 2015/08/21 03:45:26 djm Exp $ */
+/* $OpenBSD: version.h,v 1.77 2016/07/24 11:45:36 djm Exp $ */
 
+#define SSH_VERSION	"OpenSSH_7.3"
 #ifdef GSI
 #define GSI_VERSION	" GSI"
 #else
@@ -18,12 +19,9 @@
 #define MGLUE_VERSION	""
 #endif
 
-#define NCSA_VERSION	" GSI_GSSAPI_20170317"
-
-#define SSH_VERSION	"OpenSSH_7.1"
-
-#define SSH_PORTABLE	"p2"
-#define SSH_HPN         "-hpn14v10"
+#define SSH_PORTABLE	"p1"
+#define GSI_PORTABLE	"a-GSI"
+#define SSH_HPN		"-hpn14v12"
 #define SSH_RELEASE	SSH_VERSION SSH_PORTABLE SSH_HPN
 
 #ifdef NERSC_MOD
@@ -35,5 +33,5 @@
 #endif /* NERSC_MOD */
 
 #undef SSH_RELEASE
-#define SSH_RELEASE	SSH_VERSION SSH_PORTABLE SSH_AUDITING SSH_HPN \
-            NCSA_VERSION GSI_VERSION KRB5_VERSION MGLUE_VERSION
+#define SSH_RELEASE	SSH_VERSION SSH_PORTABLE GSI_PORTABLE " " SSH_AUDITING SSH_HPN \
+                        GSI_VERSION KRB5_VERSION MGLUE_VERSION

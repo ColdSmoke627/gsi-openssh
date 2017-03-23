@@ -1,4 +1,4 @@
-/* $OpenBSD: kexdhs.c,v 1.22 2015/01/26 06:10:03 djm Exp $ */
+/* $OpenBSD: kexdhs.c,v 1.24 2016/05/02 10:26:04 djm Exp $ */
 /*
  * Copyright (c) 2001 Markus Friedl.  All rights reserved.
  *
@@ -63,7 +63,14 @@ kexdh_server(struct ssh *ssh)
 		kex->dh = dh_new_group1();
 		break;
 	case KEX_DH_GRP14_SHA1:
+	case KEX_DH_GRP14_SHA256:
 		kex->dh = dh_new_group14();
+		break;
+	case KEX_DH_GRP16_SHA512:
+		kex->dh = dh_new_group16();
+		break;
+	case KEX_DH_GRP18_SHA512:
+		kex->dh = dh_new_group18();
 		break;
 	default:
 		r = SSH_ERR_INVALID_ARGUMENT;
@@ -80,6 +87,10 @@ kexdh_server(struct ssh *ssh)
 	ssh_dispatch_set(ssh, SSH2_MSG_KEXDH_INIT, &input_kex_dh_init);
 	r = 0;
  out:
+	if (r != 0) {
+		DH_free(kex->dh);
+		kex->dh = NULL;
+	}
 	return r;
 }
 
@@ -95,6 +106,7 @@ input_kex_dh_init(int type, u_int32_t seq, void *ctxt)
 	size_t sbloblen, slen;
 	size_t klen = 0, hashlen;
 	int kout, r;
+	const BIGNUM *pub_key;
 
 	if (kex->load_host_public_key == NULL ||
 	    kex->load_host_private_key == NULL) {
@@ -157,14 +169,16 @@ input_kex_dh_init(int type, u_int32_t seq, void *ctxt)
 		goto out;
 	/* calc H */
 	hashlen = sizeof(hash);
+	DH_get0_key(kex->dh, &pub_key, NULL);
 	if ((r = kex_dh_hash(
+	    kex->hash_alg,
 	    kex->client_version_string,
 	    kex->server_version_string,
 	    sshbuf_ptr(kex->peer), sshbuf_len(kex->peer),
 	    sshbuf_ptr(kex->my), sshbuf_len(kex->my),
 	    server_host_key_blob, sbloblen,
 	    dh_client_pub,
-	    kex->dh->pub_key,
+	    pub_key,
 	    shared_secret,
 	    hash, &hashlen)) != 0)
 		goto out;
@@ -181,8 +195,8 @@ input_kex_dh_init(int type, u_int32_t seq, void *ctxt)
 	}
 
 	/* sign H */
-	if ((r = kex->sign(server_host_private, server_host_public,
-	    &signature, &slen, hash, hashlen, ssh->compat)) < 0)
+	if ((r = kex->sign(server_host_private, server_host_public, &signature,
+	     &slen, hash, hashlen, kex->hostkey_alg, ssh->compat)) < 0)
 		goto out;
 
 	/* destroy_sensitive_data(); */
@@ -190,7 +204,7 @@ input_kex_dh_init(int type, u_int32_t seq, void *ctxt)
 	/* send server hostkey, DH pubkey 'f' and singed H */
 	if ((r = sshpkt_start(ssh, SSH2_MSG_KEXDH_REPLY)) != 0 ||
 	    (r = sshpkt_put_string(ssh, server_host_key_blob, sbloblen)) != 0 ||
-	    (r = sshpkt_put_bignum2(ssh, kex->dh->pub_key)) != 0 ||	/* f */
+	    (r = sshpkt_put_bignum2(ssh, pub_key)) != 0 ||	/* f */
 	    (r = sshpkt_put_string(ssh, signature, slen)) != 0 ||
 	    (r = sshpkt_send(ssh)) != 0)
 		goto out;

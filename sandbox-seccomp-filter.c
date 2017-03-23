@@ -103,6 +103,12 @@ static const struct sock_filter preauth_insns[] = {
 		offsetof(struct seccomp_data, nr)),
 
 	/* Syscalls to non-fatally deny */
+#ifdef __NR_lstat
+	SC_DENY(lstat, EACCES),
+#endif
+#ifdef __NR_lstat64
+	SC_DENY(lstat64, EACCES),
+#endif
 #ifdef __NR_fstat
 	SC_DENY(fstat, EACCES),
 #endif
@@ -136,20 +142,26 @@ static const struct sock_filter preauth_insns[] = {
 #ifdef __NR_close
 	SC_ALLOW(close),
 #endif
-#ifdef __NR_exit
-	SC_ALLOW(exit),
-#endif
-#ifdef __NR_exit_group
-	SC_ALLOW(exit_group),
-#endif
 #ifdef __NR_getpeername /* not defined on archs that go via socketcall(2) */
 	SC_ALLOW(getpeername),
 #endif
 #ifdef __NR_getpgid
 	SC_ALLOW(getpgid),
 #endif
+#ifdef __NR_exit
+	SC_ALLOW(exit),
+#endif
+#ifdef __NR_exit_group
+	SC_ALLOW(exit_group),
+#endif
+#ifdef __NR_getpgid
+	SC_ALLOW(getpgid),
+#endif
 #ifdef __NR_getpid
 	SC_ALLOW(getpid),
+#endif
+#ifdef __NR_getrandom
+	SC_ALLOW(getrandom),
 #endif
 #ifdef __NR_gettimeofday
 	SC_ALLOW(gettimeofday),

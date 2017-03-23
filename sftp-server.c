@@ -1,4 +1,4 @@
-/* $OpenBSD: sftp-server.c,v 1.107 2015/08/20 22:32:42 deraadt Exp $ */
+/* $OpenBSD: sftp-server.c,v 1.109 2016/02/15 09:47:49 dtucker Exp $ */
 /*
  * Copyright (c) 2000-2004 Markus Friedl.  All rights reserved.
  *
@@ -28,9 +28,6 @@
 #endif
 #ifdef HAVE_SYS_STATVFS_H
 #include <sys/statvfs.h>
-#endif
-#ifdef HAVE_SYS_PRCTL_H
-#include <sys/prctl.h>
 #endif
 
 #include <dirent.h>
@@ -1578,9 +1575,11 @@ process(void)
 		}
 		if (handlers[i].handler == NULL)
 #ifdef NERSC_MOD
-		s_audit("sftp_process_unknown_3", "count=%i int=%d uristring=%d",
-			get_client_session_id(), (int)getppid(), type);
+		{
+			s_audit("sftp_process_unknown_3", "count=%i int=%d uristring=%d",
+				get_client_session_id(), (int)getppid(), type);
 			error("Unknown message %u", type);
+		}
 #else
 			error("Unknown message %u", type);
 #endif
@@ -1639,6 +1638,7 @@ sftp_server_main(int argc, char **argv, struct passwd *user_pw)
 	extern char *optarg;
 	extern char *__progname;
 
+	ssh_malloc_init();	/* must be called before any mallocs */
 	__progname = ssh_get_progname(argv[0]);
 	/* NB: No call to init_pathnames() here. The sftp-server doesn't
 	   use any fixed paths, which is good, because GLOBUS_LOCATION
@@ -1716,16 +1716,16 @@ sftp_server_main(int argc, char **argv, struct passwd *user_pw)
 
 	log_init(__progname, log_level, log_facility, log_stderr);
 
-#if defined(HAVE_PRCTL) && defined(PR_SET_DUMPABLE)
 	/*
-	 * On Linux, we should try to avoid making /proc/self/{mem,maps}
+	 * On platforms where we can, avoid making /proc/self/{mem,maps}
 	 * available to the user so that sftp access doesn't automatically
 	 * imply arbitrary code execution access that will break
 	 * restricted configurations.
 	 */
-	if (prctl(PR_SET_DUMPABLE, 0) != 0)
-		fatal("unable to make the process undumpable");
-#endif /* defined(HAVE_PRCTL) && defined(PR_SET_DUMPABLE) */
+	platform_disable_tracing(1);	/* strict */
+
+	/* Drop any fine-grained privileges we don't need */
+	platform_pledge_sftp_server();
 
 	if ((cp = getenv("SSH_CONNECTION")) != NULL) {
 		client_addr = xstrdup(cp);
@@ -1760,9 +1760,8 @@ sftp_server_main(int argc, char **argv, struct passwd *user_pw)
 	if ((oqueue = sshbuf_new()) == NULL)
 		fatal("%s: sshbuf_new failed", __func__);
 
-	set_size = howmany(max + 1, NFDBITS) * sizeof(fd_mask);
-	rset = xmalloc(set_size);
-	wset = xmalloc(set_size);
+	rset = xcalloc(howmany(max + 1, NFDBITS), sizeof(fd_mask));
+	wset = xcalloc(howmany(max + 1, NFDBITS), sizeof(fd_mask));
 
 	if (homedir != NULL) {
 		if (chdir(homedir) != 0) {
@@ -1777,6 +1776,8 @@ sftp_server_main(int argc, char **argv, struct passwd *user_pw)
 		get_client_session_id(), (int)getppid(), t1buf, client_addr);
 	free(t1buf);
 #endif
+
+	set_size = howmany(max + 1, NFDBITS) * sizeof(fd_mask);
 
 	for (;;) {
 		memset(rset, 0, set_size);

@@ -100,7 +100,7 @@ ssh_gssapi_kex_mechs(gss_OID_set gss_supported, ssh_gssapi_check_fn *check,
 	u_char digest[EVP_MAX_MD_SIZE];
 	char deroid[2];
 	const EVP_MD *evp_md = EVP_md5();
-	EVP_MD_CTX md;
+	EVP_MD_CTX *md;
 
 	if (gss_enc2oid != NULL) {
 		for (i = 0; gss_enc2oid[i].encoded != NULL; i++)
@@ -113,6 +113,7 @@ ssh_gssapi_kex_mechs(gss_OID_set gss_supported, ssh_gssapi_check_fn *check,
 
 	buffer_init(&buf);
 
+	md = EVP_MD_CTX_new();
 	oidpos = 0;
 	for (i = 0; i < gss_supported->count; i++) {
 		if (gss_supported->elements[i].length < 128 &&
@@ -121,12 +122,13 @@ ssh_gssapi_kex_mechs(gss_OID_set gss_supported, ssh_gssapi_check_fn *check,
 			deroid[0] = SSH_GSS_OIDTYPE;
 			deroid[1] = gss_supported->elements[i].length;
 
-			EVP_DigestInit(&md, evp_md);
-			EVP_DigestUpdate(&md, deroid, 2);
-			EVP_DigestUpdate(&md,
+			EVP_MD_CTX_reset(md);
+			EVP_DigestInit(md, evp_md);
+			EVP_DigestUpdate(md, deroid, 2);
+			EVP_DigestUpdate(md,
 			    gss_supported->elements[i].elements,
 			    gss_supported->elements[i].length);
-			EVP_DigestFinal(&md, digest, NULL);
+			EVP_DigestFinal(md, digest, NULL);
 
 			encoded = xmalloc(EVP_MD_size(evp_md) * 2);
 			enclen = __b64_ntop(digest, EVP_MD_size(evp_md),
@@ -135,16 +137,28 @@ ssh_gssapi_kex_mechs(gss_OID_set gss_supported, ssh_gssapi_check_fn *check,
 			if (oidpos != 0)
 				buffer_put_char(&buf, ',');
 
+			buffer_append(&buf, KEX_GSS_GRP16_SHA512_ID,
+			    sizeof(KEX_GSS_GRP16_SHA512_ID) - 1);
+			buffer_append(&buf, encoded, enclen);
+			buffer_put_char(&buf, ',');
+			buffer_append(&buf, KEX_GSS_GRP18_SHA512_ID,
+			    sizeof(KEX_GSS_GRP18_SHA512_ID) - 1);
+			buffer_append(&buf, encoded, enclen);
+			buffer_put_char(&buf, ',');
 			buffer_append(&buf, KEX_GSS_GEX_SHA1_ID,
 			    sizeof(KEX_GSS_GEX_SHA1_ID) - 1);
 			buffer_append(&buf, encoded, enclen);
 			buffer_put_char(&buf, ',');
-			buffer_append(&buf, KEX_GSS_GRP1_SHA1_ID, 
-			    sizeof(KEX_GSS_GRP1_SHA1_ID) - 1);
+			buffer_append(&buf, KEX_GSS_GRP14_SHA256_ID,
+			    sizeof(KEX_GSS_GRP14_SHA256_ID) - 1);
 			buffer_append(&buf, encoded, enclen);
 			buffer_put_char(&buf, ',');
 			buffer_append(&buf, KEX_GSS_GRP14_SHA1_ID,
 			    sizeof(KEX_GSS_GRP14_SHA1_ID) - 1);
+			buffer_append(&buf, encoded, enclen);
+			buffer_put_char(&buf, ',');
+			buffer_append(&buf, KEX_GSS_GRP1_SHA1_ID, 
+			    sizeof(KEX_GSS_GRP1_SHA1_ID) - 1);
 			buffer_append(&buf, encoded, enclen);
 
 			gss_enc2oid[oidpos].oid = &(gss_supported->elements[i]);
@@ -152,6 +166,7 @@ ssh_gssapi_kex_mechs(gss_OID_set gss_supported, ssh_gssapi_check_fn *check,
 			oidpos++;
 		}
 	}
+	EVP_MD_CTX_free(md);
 	gss_enc2oid[oidpos].oid = NULL;
 	gss_enc2oid[oidpos].encoded = NULL;
 
@@ -183,6 +198,21 @@ ssh_gssapi_id_kex(Gssctxt *ctx, char *name, int kex_type) {
 		if (strlen(name) < sizeof(KEX_GSS_GRP14_SHA1_ID))
 			return GSS_C_NO_OID;
 		name += sizeof(KEX_GSS_GRP14_SHA1_ID) - 1;
+		break;
+	case KEX_GSS_GRP14_SHA256:
+		if (strlen(name) < sizeof(KEX_GSS_GRP14_SHA256_ID))
+			return GSS_C_NO_OID;
+		name += sizeof(KEX_GSS_GRP14_SHA256_ID) - 1;
+		break;
+	case KEX_GSS_GRP16_SHA512:
+		if (strlen(name) < sizeof(KEX_GSS_GRP16_SHA512_ID))
+			return GSS_C_NO_OID;
+		name += sizeof(KEX_GSS_GRP16_SHA512_ID) - 1;
+		break;
+	case KEX_GSS_GRP18_SHA512:
+		if (strlen(name) < sizeof(KEX_GSS_GRP18_SHA512_ID))
+			return GSS_C_NO_OID;
+		name += sizeof(KEX_GSS_GRP18_SHA512_ID) - 1;
 		break;
 	case KEX_GSS_GEX_SHA1:
 		if (strlen(name) < sizeof(KEX_GSS_GEX_SHA1_ID))

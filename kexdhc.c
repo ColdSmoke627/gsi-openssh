@@ -1,4 +1,4 @@
-/* $OpenBSD: kexdhc.c,v 1.18 2015/01/26 06:10:03 djm Exp $ */
+/* $OpenBSD: kexdhc.c,v 1.19 2016/05/02 10:26:04 djm Exp $ */
 /*
  * Copyright (c) 2001 Markus Friedl.  All rights reserved.
  *
@@ -56,6 +56,7 @@ kexdh_client(struct ssh *ssh)
 {
 	struct kex *kex = ssh->kex;
 	int r;
+	const BIGNUM *pub_key;
 
 	/* generate and send 'e', client DH public key */
 	switch (kex->kex_type) {
@@ -63,7 +64,14 @@ kexdh_client(struct ssh *ssh)
 		kex->dh = dh_new_group1();
 		break;
 	case KEX_DH_GRP14_SHA1:
+	case KEX_DH_GRP14_SHA256:
 		kex->dh = dh_new_group14();
+		break;
+	case KEX_DH_GRP16_SHA512:
+		kex->dh = dh_new_group16();
+		break;
+	case KEX_DH_GRP18_SHA512:
+		kex->dh = dh_new_group18();
 		break;
 	default:
 		r = SSH_ERR_INVALID_ARGUMENT;
@@ -74,21 +82,27 @@ kexdh_client(struct ssh *ssh)
 		goto out;
 	}
 	debug("sending SSH2_MSG_KEXDH_INIT");
-	if ((r = dh_gen_key(kex->dh, kex->we_need * 8)) != 0 ||
-	    (r = sshpkt_start(ssh, SSH2_MSG_KEXDH_INIT)) != 0 ||
-	    (r = sshpkt_put_bignum2(ssh, kex->dh->pub_key)) != 0 ||
+	if ((r = dh_gen_key(kex->dh, kex->we_need * 8)) != 0)
+		goto out;
+	DH_get0_key(kex->dh, &pub_key, NULL);
+	if ((r = sshpkt_start(ssh, SSH2_MSG_KEXDH_INIT)) != 0 ||
+	    (r = sshpkt_put_bignum2(ssh, pub_key)) != 0 ||
 	    (r = sshpkt_send(ssh)) != 0)
 		goto out;
 #ifdef DEBUG_KEXDH
 	DHparams_print_fp(stderr, kex->dh);
 	fprintf(stderr, "pub= ");
-	BN_print_fp(stderr, kex->dh->pub_key);
+	BN_print_fp(stderr, pub_key);
 	fprintf(stderr, "\n");
 #endif
 	debug("expecting SSH2_MSG_KEXDH_REPLY");
 	ssh_dispatch_set(ssh, SSH2_MSG_KEXDH_REPLY, &input_kex_dh);
 	r = 0;
  out:
+	if (r != 0) {
+		DH_free(kex->dh);
+		kex->dh = NULL;
+	}
 	return r;
 }
 
@@ -103,6 +117,7 @@ input_kex_dh(int type, u_int32_t seq, void *ctxt)
 	u_char hash[SSH_DIGEST_MAX_LENGTH];
 	size_t klen = 0, slen, sbloblen, hashlen;
 	int kout, r;
+	const BIGNUM *pub_key;
 
 	if (kex->verify_host_key == NULL) {
 		r = SSH_ERR_INVALID_ARGUMENT;
@@ -162,14 +177,16 @@ input_kex_dh(int type, u_int32_t seq, void *ctxt)
 #endif
 
 	/* calc and verify H */
+	DH_get0_key(kex->dh, &pub_key, NULL);
 	hashlen = sizeof(hash);
 	if ((r = kex_dh_hash(
+	    kex->hash_alg,
 	    kex->client_version_string,
 	    kex->server_version_string,
 	    sshbuf_ptr(kex->my), sshbuf_len(kex->my),
 	    sshbuf_ptr(kex->peer), sshbuf_len(kex->peer),
 	    server_host_key_blob, sbloblen,
-	    kex->dh->pub_key,
+	    pub_key,
 	    dh_server_pub,
 	    shared_secret,
 	    hash, &hashlen)) != 0)

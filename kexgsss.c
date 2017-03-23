@@ -74,11 +74,13 @@ kexgss_server(struct ssh *ssh)
     u_char hash[SSH_DIGEST_MAX_LENGTH];
 	DH *dh = NULL;
 	int min = -1, max = -1, nbits = -1;
+	int cmin = -1, cmax = -1; /* client proposal */
 	BIGNUM *shared_secret = NULL;
 	BIGNUM *dh_client_pub = NULL;
 	int type = 0;
 	gss_OID oid;
 	char *mechs = NULL;
+	const BIGNUM *p, *g, *pub_key;
 
 	/* Initialise GSSAPI */
 
@@ -109,14 +111,24 @@ kexgss_server(struct ssh *ssh)
 	case KEX_GSS_GRP14_SHA1:
 		dh = dh_new_group14();
 		break;
+	case KEX_GSS_GRP14_SHA256:
+		dh = dh_new_group14();
+		break;
+	case KEX_GSS_GRP16_SHA512:
+		dh = dh_new_group16();
+		break;
+	case KEX_GSS_GRP18_SHA512:
+		dh = dh_new_group18();
+		break;
 	case KEX_GSS_GEX_SHA1:
 		debug("Doing group exchange");
 		packet_read_expect(SSH2_MSG_KEXGSS_GROUPREQ);
-		min = packet_get_int();
+		/* store client proposal to provide valid signature */
+		cmin = packet_get_int();
 		nbits = packet_get_int();
-		max = packet_get_int();
-		min = MAX(DH_GRP_MIN, min);
-		max = MIN(DH_GRP_MAX, max);
+		cmax = packet_get_int();
+		min = MAX(DH_GRP_MIN, cmin);
+		max = MIN(DH_GRP_MAX, cmax);
 		packet_check_eom();
 		if (max < min || nbits < min || max < nbits)
 			fatal("GSS_GEX, bad parameters: %d !< %d !< %d",
@@ -125,9 +137,10 @@ kexgss_server(struct ssh *ssh)
 		if (dh == NULL)
 			packet_disconnect("Protocol error: no matching group found");
 
+		DH_get0_pqg(dh, &p, NULL, &g);
 		packet_start(SSH2_MSG_KEXGSS_GROUP);
-		packet_put_bignum2(dh->p);
-		packet_put_bignum2(dh->g);
+		packet_put_bignum2((BIGNUM *)p);
+		packet_put_bignum2((BIGNUM *)g);
 		packet_send();
 
 		packet_write_wait();
@@ -220,16 +233,20 @@ kexgss_server(struct ssh *ssh)
 	memset(kbuf, 0, klen);
 	free(kbuf);
 
+	DH_get0_key(dh, &pub_key, NULL);
 	hashlen = sizeof(hash);
 	switch (kex->kex_type) {
 	case KEX_GSS_GRP1_SHA1:
 	case KEX_GSS_GRP14_SHA1:
-		kex_dh_hash(
+	case KEX_GSS_GRP14_SHA256:
+	case KEX_GSS_GRP16_SHA512:
+	case KEX_GSS_GRP18_SHA512:
+		kex_dh_hash(kex->hash_alg,
 		    kex->client_version_string, kex->server_version_string,
 		    buffer_ptr(kex->peer), buffer_len(kex->peer),
 		    buffer_ptr(kex->my), buffer_len(kex->my),
 		    NULL, 0, /* Change this if we start sending host keys */
-		    dh_client_pub, dh->pub_key, shared_secret,
+		    dh_client_pub, pub_key, shared_secret,
 		    hash, &hashlen
 		);
 		break;
@@ -240,10 +257,10 @@ kexgss_server(struct ssh *ssh)
 		    buffer_ptr(kex->peer), buffer_len(kex->peer),
 		    buffer_ptr(kex->my), buffer_len(kex->my),
 		    NULL, 0,
-		    min, nbits, max,
-		    dh->p, dh->g,
+		    cmin, nbits, cmax,
+		    p, g,
 		    dh_client_pub,
-		    dh->pub_key,
+		    pub_key,
 		    shared_secret,
 		    hash, &hashlen
 		);
@@ -267,7 +284,7 @@ kexgss_server(struct ssh *ssh)
 		fatal("Couldn't get MIC");
 
 	packet_start(SSH2_MSG_KEXGSS_COMPLETE);
-	packet_put_bignum2(dh->pub_key);
+	packet_put_bignum2((BIGNUM *)pub_key);
 	packet_put_string((char *)msg_tok.value,msg_tok.length);
 
 	if (send_tok.length != 0) {

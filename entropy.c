@@ -217,6 +217,10 @@ seed_rng(void)
 		fatal("OpenSSL version mismatch. Built against %lx, you "
 		    "have %lx", (u_long)OPENSSL_VERSION_NUMBER, SSLeay());
 
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+	atexit(RAND_cleanup);
+#endif
+
 #ifndef OPENSSL_PRNG_ONLY
 	if (RAND_status() == 1) {
 		debug3("RNG is ready, skipping seeding");

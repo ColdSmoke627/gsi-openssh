@@ -1,4 +1,4 @@
-/* $OpenBSD: ssh-agent.c,v 1.204 2015/07/08 20:24:02 markus Exp $ */
+/* $OpenBSD: ssh-agent.c,v 1.213 2016/05/02 08:49:03 djm Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
  * Copyright (c) 1995 Tatu Ylonen <ylo@cs.hut.fi>, Espoo, Finland
@@ -89,10 +89,6 @@
 #include "ssh-pkcs11.h"
 #endif
 
-#if defined(HAVE_SYS_PRCTL_H)
-#include <sys/prctl.h>	/* For prctl() and PR_SET_DUMPABLE */
-#endif
-
 typedef enum {
 	AUTH_UNUSED,
 	AUTH_SOCKET,
@@ -145,8 +141,8 @@ char socket_dir[PATH_MAX];
 #define LOCK_SALT_SIZE	16
 #define LOCK_ROUNDS	1
 int locked = 0;
-char lock_passwd[LOCK_SIZE];
-char lock_salt[LOCK_SALT_SIZE];
+u_char lock_pwhash[LOCK_SIZE];
+u_char lock_salt[LOCK_SALT_SIZE];
 
 extern char *__progname;
 
@@ -256,12 +252,12 @@ process_request_identities(SocketEntry *e, int version)
 	TAILQ_FOREACH(id, &tab->idlist, next) {
 		if (id->key->type == KEY_RSA1) {
 #ifdef WITH_SSH1
+			const BIGNUM *r_n, *r_e;
+			RSA_get0_key(id->key->rsa, &r_n, &r_e, NULL);
 			if ((r = sshbuf_put_u32(msg,
-			    BN_num_bits(id->key->rsa->n))) != 0 ||
-			    (r = sshbuf_put_bignum1(msg,
-			    id->key->rsa->e)) != 0 ||
-			    (r = sshbuf_put_bignum1(msg,
-			    id->key->rsa->n)) != 0)
+			    BN_num_bits(r_n))) != 0 ||
+			    (r = sshbuf_put_bignum1(msg, r_e)) != 0 ||
+			    (r = sshbuf_put_bignum1(msg, r_n)) != 0)
 				fatal("%s: buffer error: %s",
 				    __func__, ssh_err(r));
 #endif
@@ -300,6 +296,7 @@ process_authentication_challenge1(SocketEntry *e)
 	struct sshbuf *msg;
 	struct ssh_digest_ctx *md;
 	struct sshkey *key;
+	BIGNUM *r_n = NULL, *r_e = NULL;
 
 	if ((msg = sshbuf_new()) == NULL)
 		fatal("%s: sshbuf_new failed", __func__);
@@ -308,11 +305,16 @@ process_authentication_challenge1(SocketEntry *e)
 	if ((challenge = BN_new()) == NULL)
 		fatal("%s: BN_new failed", __func__);
 
-	if ((r = sshbuf_get_u32(e->request, NULL)) != 0 || /* ignored */
-	    (r = sshbuf_get_bignum1(e->request, key->rsa->e)) != 0 ||
-	    (r = sshbuf_get_bignum1(e->request, key->rsa->n)) != 0 ||
-	    (r = sshbuf_get_bignum1(e->request, challenge)))
+	if ((r_n = BN_new()) == NULL || (r_e = BN_new()) == NULL ||
+	    (r = sshbuf_get_u32(e->request, NULL)) != 0 || /* ignored */
+	    (r = sshbuf_get_bignum1(e->request, r_e)) != 0 ||
+	    (r = sshbuf_get_bignum1(e->request, r_n)) != 0 ||
+	    (r = sshbuf_get_bignum1(e->request, challenge)) ||
+	    RSA_set0_key(key->rsa, r_n, r_e, NULL) == 0) {
+		BN_free(r_n);
+		BN_free(r_e);
 		fatal("%s: buffer error: %s", __func__, ssh_err(r));
+	}
 
 	/* Only protocol 1.1 is supported */
 	if (sshbuf_len(e->request) == 0)
@@ -369,6 +371,18 @@ process_authentication_challenge1(SocketEntry *e)
 }
 #endif
 
+static char *
+agent_decode_alg(struct sshkey *key, u_int flags)
+{
+	if (key->type == KEY_RSA) {
+		if (flags & SSH_AGENT_RSA_SHA2_256)
+			return "rsa-sha2-256";
+		else if (flags & SSH_AGENT_RSA_SHA2_512)
+			return "rsa-sha2-512";
+	}
+	return NULL;
+}
+
 /* ssh2 only */
 static void
 process_sign_request2(SocketEntry *e)
@@ -390,7 +404,7 @@ process_sign_request2(SocketEntry *e)
 	if (flags & SSH_AGENT_OLD_SIGNATURE)
 		compat = SSH_BUG_SIGBLOB;
 	if ((r = sshkey_from_blob(blob, blen, &key)) != 0) {
-		error("%s: cannot parse key blob: %s", __func__, ssh_err(ok));
+		error("%s: cannot parse key blob: %s", __func__, ssh_err(r));
 		goto send;
 	}
 	if ((id = lookup_identity(key, 2)) == NULL) {
@@ -402,8 +416,8 @@ process_sign_request2(SocketEntry *e)
 		goto send;
 	}
 	if ((r = sshkey_sign(id->key, &signature, &slen,
-	    data, dlen, compat)) != 0) {
-		error("%s: sshkey_sign: %s", __func__, ssh_err(ok));
+	    data, dlen, agent_decode_alg(key, flags), compat)) != 0) {
+		error("%s: sshkey_sign: %s", __func__, ssh_err(r));
 		goto send;
 	}
 	/* Success */
@@ -436,6 +450,7 @@ process_remove_identity(SocketEntry *e, int version)
 	u_char *blob;
 #ifdef WITH_SSH1
 	u_int bits;
+	BIGNUM *r_n = NULL, *r_e = NULL;
 #endif /* WITH_SSH1 */
 
 	switch (version) {
@@ -445,10 +460,15 @@ process_remove_identity(SocketEntry *e, int version)
 			error("%s: sshkey_new failed", __func__);
 			return;
 		}
-		if ((r = sshbuf_get_u32(e->request, &bits)) != 0 ||
-		    (r = sshbuf_get_bignum1(e->request, key->rsa->e)) != 0 ||
-		    (r = sshbuf_get_bignum1(e->request, key->rsa->n)) != 0)
+		if ((r_n = BN_new()) == NULL || (r_e = BN_new()) == NULL ||
+		    (r = sshbuf_get_u32(e->request, &bits)) != 0 ||
+		    (r = sshbuf_get_bignum1(e->request, r_e)) != 0 ||
+		    (r = sshbuf_get_bignum1(e->request, r_n)) != 0 ||
+		    RSA_set0_key(key->rsa, r_n, r_e, NULL) == 0) {
+			BN_free(r_n);
+			BN_free(r_e);
 			fatal("%s: buffer error: %s", __func__, ssh_err(r));
+		}
 
 		if (bits != sshkey_size(key))
 			logit("Warning: identity keysize mismatch: "
@@ -551,23 +571,38 @@ agent_decode_rsa1(struct sshbuf *m, struct sshkey **kp)
 {
 	struct sshkey *k = NULL;
 	int r = SSH_ERR_INTERNAL_ERROR;
+	BIGNUM *n = NULL, *e = NULL, *d = NULL,
+	    *iqmp = NULL, *q = NULL, *p = NULL;
 
 	*kp = NULL;
 	if ((k = sshkey_new_private(KEY_RSA1)) == NULL)
 		return SSH_ERR_ALLOC_FAIL;
 
-	if ((r = sshbuf_get_u32(m, NULL)) != 0 ||		/* ignored */
-	    (r = sshbuf_get_bignum1(m, k->rsa->n)) != 0 ||
-	    (r = sshbuf_get_bignum1(m, k->rsa->e)) != 0 ||
-	    (r = sshbuf_get_bignum1(m, k->rsa->d)) != 0 ||
-	    (r = sshbuf_get_bignum1(m, k->rsa->iqmp)) != 0 ||
+	if ((n = BN_new()) == NULL || (e = BN_new()) == NULL ||
+	    (d = BN_new()) == NULL || (iqmp = BN_new()) == NULL ||
+	    (q = BN_new()) == NULL || (p = BN_new()) == NULL ||
+	    (r = sshbuf_get_u32(m, NULL)) != 0 ||		/* ignored */
+	    (r = sshbuf_get_bignum1(m, n)) != 0 ||
+	    (r = sshbuf_get_bignum1(m, e)) != 0 ||
+	    (r = sshbuf_get_bignum1(m, d)) != 0 ||
+	    (r = sshbuf_get_bignum1(m, iqmp)) != 0 ||
 	    /* SSH1 and SSL have p and q swapped */
-	    (r = sshbuf_get_bignum1(m, k->rsa->q)) != 0 ||	/* p */
-	    (r = sshbuf_get_bignum1(m, k->rsa->p)) != 0) 	/* q */
+	    (r = sshbuf_get_bignum1(m, q)) != 0 ||	/* p */
+	    (r = sshbuf_get_bignum1(m, p)) != 0 || 	/* q */
+	    RSA_set0_key(k->rsa, n, e, d) == 0 ||
+	    RSA_set0_factors(k->rsa, p, q) == 0 ||
+	    RSA_set0_crt_params(k->rsa, NULL, NULL, iqmp) == 0) {
+		BN_free(n);
+		BN_free(e);
+		BN_free(d);
+		BN_free(p);
+		BN_free(q);
+		BN_free(iqmp);
 		goto out;
+	}
 
 	/* Generate additional parameters */
-	if ((r = rsa_generate_additional_parameters(k->rsa)) != 0)
+	if ((r = rsa_generate_additional_parameters(k->rsa, NULL)) != 0)
 		goto out;
 	/* enable blinding */
 	if (RSA_blinding_on(k->rsa, NULL) != 1) {
@@ -666,7 +701,8 @@ static void
 process_lock_agent(SocketEntry *e, int lock)
 {
 	int r, success = 0, delay;
-	char *passwd, passwdhash[LOCK_SIZE];
+	char *passwd;
+	u_char passwdhash[LOCK_SIZE];
 	static u_int fail_count = 0;
 	size_t pwlen;
 
@@ -678,11 +714,11 @@ process_lock_agent(SocketEntry *e, int lock)
 		if (bcrypt_pbkdf(passwd, pwlen, lock_salt, sizeof(lock_salt),
 		    passwdhash, sizeof(passwdhash), LOCK_ROUNDS) < 0)
 			fatal("bcrypt_pbkdf");
-		if (timingsafe_bcmp(passwdhash, lock_passwd, LOCK_SIZE) == 0) {
+		if (timingsafe_bcmp(passwdhash, lock_pwhash, LOCK_SIZE) == 0) {
 			debug("agent unlocked");
 			locked = 0;
 			fail_count = 0;
-			explicit_bzero(lock_passwd, sizeof(lock_passwd));
+			explicit_bzero(lock_pwhash, sizeof(lock_pwhash));
 			success = 1;
 		} else {
 			/* delay in 0.1s increments up to 10s */
@@ -699,7 +735,7 @@ process_lock_agent(SocketEntry *e, int lock)
 		locked = 1;
 		arc4random_buf(lock_salt, sizeof(lock_salt));
 		if (bcrypt_pbkdf(passwd, pwlen, lock_salt, sizeof(lock_salt),
-		    lock_passwd, sizeof(lock_passwd), LOCK_ROUNDS) < 0)
+		    lock_pwhash, sizeof(lock_pwhash), LOCK_ROUNDS) < 0)
 			fatal("bcrypt_pbkdf");
 		success = 1;
 	}
@@ -1189,6 +1225,7 @@ main(int ac, char **av)
 	size_t len;
 	mode_t prev_mask;
 
+	ssh_malloc_init();	/* must be called before any mallocs */
 	/* Ensure that fds 0, 1 and 2 are open or directed to /dev/null */
 	sanitise_stdfd();
 
@@ -1196,10 +1233,7 @@ main(int ac, char **av)
 	setegid(getgid());
 	setgid(getgid());
 
-#if defined(HAVE_PRCTL) && defined(PR_SET_DUMPABLE)
-	/* Disable ptrace on Linux without sgid bit */
-	prctl(PR_SET_DUMPABLE, 0);
-#endif
+	platform_disable_tracing(0);	/* strict=no */
 
 #ifdef WITH_OPENSSL
 	OpenSSL_add_all_algorithms();
@@ -1332,6 +1366,7 @@ main(int ac, char **av)
 		printf(format, SSH_AUTHSOCKET_ENV_NAME, socket_name,
 		    SSH_AUTHSOCKET_ENV_NAME);
 		printf("echo Agent pid %ld;\n", (long)parent_pid);
+		fflush(stdout);
 		goto skip;
 	}
 	pid = fork();
@@ -1403,6 +1438,10 @@ skip:
 	signal(SIGHUP, cleanup_handler);
 	signal(SIGTERM, cleanup_handler);
 	nalloc = 0;
+
+	if (pledge("stdio cpath unix id proc exec", NULL) == -1)
+		fatal("%s: pledge: %s", __progname, strerror(errno));
+	platform_pledge_agent();
 
 	while (1) {
 		prepare_select(&readsetp, &writesetp, &max_fd, &nalloc, &tvp);

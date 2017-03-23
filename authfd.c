@@ -1,4 +1,4 @@
-/* $OpenBSD: authfd.c,v 1.98 2015/07/03 03:43:18 djm Exp $ */
+/* $OpenBSD: authfd.c,v 1.100 2015/12/04 16:41:28 markus Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
  * Copyright (c) 1995 Tatu Ylonen <ylo@cs.hut.fi>, Espoo, Finland
@@ -207,15 +207,22 @@ deserialise_identity1(struct sshbuf *ids, struct sshkey **keyp, char **commentp)
 	int r, keybits;
 	u_int32_t bits;
 	char *comment = NULL;
+	BIGNUM *e = NULL, *n = NULL;
 
 	if ((key = sshkey_new(KEY_RSA1)) == NULL)
 		return SSH_ERR_ALLOC_FAIL;
-	if ((r = sshbuf_get_u32(ids, &bits)) != 0 ||
-	    (r = sshbuf_get_bignum1(ids, key->rsa->e)) != 0 ||
-	    (r = sshbuf_get_bignum1(ids, key->rsa->n)) != 0 ||
-	    (r = sshbuf_get_cstring(ids, &comment, NULL)) != 0)
+	if ((e = BN_new()) == NULL ||
+	    (n = BN_new()) == NULL ||
+	    (r = sshbuf_get_u32(ids, &bits)) != 0 ||
+	    (r = sshbuf_get_bignum1(ids, e)) != 0 ||
+	    (r = sshbuf_get_bignum1(ids, n)) != 0 ||
+	    (RSA_set0_key(key->rsa, n, e, NULL) == 0) ||
+	    (r = sshbuf_get_cstring(ids, &comment, NULL)) != 0) {
+		BN_free(n);
+		BN_free(e);
 		goto out;
-	keybits = BN_num_bits(key->rsa->n);
+	}
+	keybits = BN_num_bits(n);
 	/* XXX previously we just warned here. I think we should be strict */
 	if (keybits < 0 || bits != (u_int)keybits) {
 		r = SSH_ERR_KEY_BITS_MISMATCH;
@@ -393,15 +400,17 @@ ssh_decrypt_challenge(int sock, struct sshkey* key, BIGNUM *challenge,
 	struct sshbuf *msg;
 	int r;
 	u_char type;
+	const BIGNUM *e, *n;
 
 	if (key->type != KEY_RSA1)
 		return SSH_ERR_INVALID_ARGUMENT;
 	if ((msg = sshbuf_new()) == NULL)
 		return SSH_ERR_ALLOC_FAIL;
+	RSA_get0_key(key->rsa, &n, &e, NULL);
 	if ((r = sshbuf_put_u8(msg, SSH_AGENTC_RSA_CHALLENGE)) != 0 ||
-	    (r = sshbuf_put_u32(msg, BN_num_bits(key->rsa->n))) != 0 ||
-	    (r = sshbuf_put_bignum1(msg, key->rsa->e)) != 0 ||
-	    (r = sshbuf_put_bignum1(msg, key->rsa->n)) != 0 ||
+	    (r = sshbuf_put_u32(msg, BN_num_bits(n))) != 0 ||
+	    (r = sshbuf_put_bignum1(msg, e)) != 0 ||
+	    (r = sshbuf_put_bignum1(msg, n)) != 0 ||
 	    (r = sshbuf_put_bignum1(msg, challenge)) != 0 ||
 	    (r = sshbuf_put(msg, session_id, 16)) != 0 ||
 	    (r = sshbuf_put_u32(msg, 1)) != 0) /* Response type for proto 1.1 */
@@ -426,11 +435,24 @@ ssh_decrypt_challenge(int sock, struct sshkey* key, BIGNUM *challenge,
 }
 #endif
 
+/* encode signature algoritm in flag bits, so we can keep the msg format */
+static u_int
+agent_encode_alg(struct sshkey *key, const char *alg)
+{
+	if (alg != NULL && key->type == KEY_RSA) {
+		if (strcmp(alg, "rsa-sha2-256") == 0)
+			return SSH_AGENT_RSA_SHA2_256;
+		else if (strcmp(alg, "rsa-sha2-512") == 0)
+			return SSH_AGENT_RSA_SHA2_512;
+	}
+	return 0;
+}
+
 /* ask agent to sign data, returns err.h code on error, 0 on success */
 int
 ssh_agent_sign(int sock, struct sshkey *key,
     u_char **sigp, size_t *lenp,
-    const u_char *data, size_t datalen, u_int compat)
+    const u_char *data, size_t datalen, const char *alg, u_int compat)
 {
 	struct sshbuf *msg;
 	u_char *blob = NULL, type;
@@ -449,12 +471,13 @@ ssh_agent_sign(int sock, struct sshkey *key,
 		return SSH_ERR_ALLOC_FAIL;
 	if ((r = sshkey_to_blob(key, &blob, &blen)) != 0)
 		goto out;
+	flags |= agent_encode_alg(key, alg);
 	if ((r = sshbuf_put_u8(msg, SSH2_AGENTC_SIGN_REQUEST)) != 0 ||
 	    (r = sshbuf_put_string(msg, blob, blen)) != 0 ||
 	    (r = sshbuf_put_string(msg, data, datalen)) != 0 ||
 	    (r = sshbuf_put_u32(msg, flags)) != 0)
 		goto out;
-	if ((r = ssh_request_reply(sock, msg, msg) != 0))
+	if ((r = ssh_request_reply(sock, msg, msg)) != 0)
 		goto out;
 	if ((r = sshbuf_get_u8(msg, &type)) != 0)
 		goto out;
@@ -485,15 +508,19 @@ static int
 ssh_encode_identity_rsa1(struct sshbuf *b, RSA *key, const char *comment)
 {
 	int r;
+	const BIGNUM *n, *e, *d, *q, *p, *iqmp;
 
+	RSA_get0_key(key, &n, &e, &d);
+	RSA_get0_factors(key, &p, &q);
+	RSA_get0_crt_params(key, NULL, NULL, &iqmp);
 	/* To keep within the protocol: p < q for ssh. in SSL p > q */
-	if ((r = sshbuf_put_u32(b, BN_num_bits(key->n))) != 0 ||
-	    (r = sshbuf_put_bignum1(b, key->n)) != 0 ||
-	    (r = sshbuf_put_bignum1(b, key->e)) != 0 ||
-	    (r = sshbuf_put_bignum1(b, key->d)) != 0 ||
-	    (r = sshbuf_put_bignum1(b, key->iqmp)) != 0 ||
-	    (r = sshbuf_put_bignum1(b, key->q)) != 0 ||
-	    (r = sshbuf_put_bignum1(b, key->p)) != 0 ||
+	if ((r = sshbuf_put_u32(b, BN_num_bits(n))) != 0 ||
+	    (r = sshbuf_put_bignum1(b, n)) != 0 ||
+	    (r = sshbuf_put_bignum1(b, e)) != 0 ||
+	    (r = sshbuf_put_bignum1(b, d)) != 0 ||
+	    (r = sshbuf_put_bignum1(b, iqmp)) != 0 ||
+	    (r = sshbuf_put_bignum1(b, q)) != 0 ||
+	    (r = sshbuf_put_bignum1(b, p)) != 0 ||
 	    (r = sshbuf_put_cstring(b, comment)) != 0)
 		return r;
 	return 0;
@@ -608,11 +635,13 @@ ssh_remove_identity(int sock, struct sshkey *key)
 
 #ifdef WITH_SSH1
 	if (key->type == KEY_RSA1) {
+		const BIGNUM *e, *n;
+		RSA_get0_key(key->rsa, &n, &e, NULL);
 		if ((r = sshbuf_put_u8(msg,
 		    SSH_AGENTC_REMOVE_RSA_IDENTITY)) != 0 ||
-		    (r = sshbuf_put_u32(msg, BN_num_bits(key->rsa->n))) != 0 ||
-		    (r = sshbuf_put_bignum1(msg, key->rsa->e)) != 0 ||
-		    (r = sshbuf_put_bignum1(msg, key->rsa->n)) != 0)
+		    (r = sshbuf_put_u32(msg, BN_num_bits(n))) != 0 ||
+		    (r = sshbuf_put_bignum1(msg, e)) != 0 ||
+		    (r = sshbuf_put_bignum1(msg, n)) != 0)
 			goto out;
 	} else
 #endif

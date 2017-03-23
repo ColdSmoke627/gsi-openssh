@@ -1,4 +1,4 @@
-/* $OpenBSD: ssh-pkcs11-client.c,v 1.5 2014/06/24 01:13:21 djm Exp $ */
+/* $OpenBSD: ssh-pkcs11-client.c,v 1.6 2015/12/11 00:20:04 mmcc Exp $ */
 /*
  * Copyright (c) 2010 Markus Friedl.  All rights reserved.
  *
@@ -143,12 +143,14 @@ pkcs11_rsa_private_encrypt(int flen, const u_char *from, u_char *to, RSA *rsa,
 static int
 wrap_key(RSA *rsa)
 {
-	static RSA_METHOD helper_rsa;
+	static RSA_METHOD *helper_rsa;
 
-	memcpy(&helper_rsa, RSA_get_default_method(), sizeof(helper_rsa));
-	helper_rsa.name = "ssh-pkcs11-helper";
-	helper_rsa.rsa_priv_enc = pkcs11_rsa_private_encrypt;
-	RSA_set_method(rsa, &helper_rsa);
+	if (helper_rsa == NULL) {
+		helper_rsa = RSA_meth_dup(RSA_get_default_method());
+		RSA_meth_set1_name(helper_rsa, "ssh-pkcs11-helper");
+		RSA_meth_set_priv_enc(helper_rsa, pkcs11_rsa_private_encrypt);
+	}
+	RSA_set_method(rsa, helper_rsa);
 	return (0);
 }
 
@@ -173,7 +175,7 @@ pkcs11_start_helper(void)
 		close(pair[0]);
 		close(pair[1]);
 		execlp(_PATH_SSH_PKCS11_HELPER, _PATH_SSH_PKCS11_HELPER,
-		    (char *) 0);
+		    (char *)NULL);
 		fprintf(stderr, "exec: %s: %s\n", _PATH_SSH_PKCS11_HELPER,
 		    strerror(errno));
 		_exit(1);

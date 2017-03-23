@@ -1,4 +1,4 @@
-/* $OpenBSD: pathnames.h,v 1.24 2013/12/06 13:39:49 markus Exp $ */
+/* $OpenBSD: pathnames.h,v 1.25 2016/03/31 05:24:06 dtucker Exp $ */
 
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
@@ -39,11 +39,10 @@ extern char *_PATH_HOST_ECDSA_KEY_FILE;
 extern char *_PATH_HOST_ED25519_KEY_FILE;
 extern char *_PATH_HOST_RSA_KEY_FILE;
 extern char *_PATH_DH_MODULI;
-/* Backwards compatibility */
-extern char *_PATH_DH_PRIMES;
-  
+ 
+extern char *_PATH_SSHDIR;
 extern char *_PATH_SSH_PROGRAM;
-  
+ 
 /*
  * The process id of the daemon listening for connections is saved here to
  * make it easier to kill the correct daemon when necessary.

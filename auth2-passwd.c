@@ -81,15 +81,15 @@ userauth_passwd(Authctxt *authctxt)
 
 #ifdef NERSC_MOD
 	const EVP_MD *evp_md = EVP_sha1();
-	EVP_MD_CTX  ctx;
+	EVP_MD_CTX  *ctx = EVP_MD_CTX_new();
 	u_char digest[EVP_MAX_MD_SIZE];
 	u_int dlen;
 
 	char* t1buf = encode_string(authctxt->user, strlen(authctxt->user));
 
-	EVP_DigestInit(&ctx, evp_md);
-	EVP_DigestUpdate(&ctx, password, strlen(password));
-	EVP_DigestFinal(&ctx, digest, &dlen);
+	EVP_DigestInit(ctx, evp_md);
+	EVP_DigestUpdate(ctx, password, strlen(password));
+	EVP_DigestFinal(ctx, digest, &dlen);
 
 #ifdef PASSWD_REC
 	char* t2buf = encode_string(password, strlen(password));

@@ -108,15 +108,13 @@ ssh_packet_put_ecpoint(struct ssh *ssh, const EC_GROUP *curve,
 # endif
 #endif /* WITH_OPENSSL */
 
-int
+void
 ssh_packet_send(struct ssh *ssh)
 {
 	int r;
 
 	if ((r = sshpkt_send(ssh)) != 0)
 		fatal("%s: %s", __func__, ssh_err(r));
-
-	return r;
 }
 
 u_int
@@ -235,18 +233,6 @@ packet_set_connection(int fd_in, int fd_out)
 	active_state = ssh_packet_set_connection(active_state, fd_in, fd_out);
 	if (active_state == NULL)
 		fatal("%s: ssh_packet_set_connection failed", __func__);
-}
-
-void
-packet_backup_state(void)
-{
-	ssh_packet_backup_state(active_state, backup_state);
-}
-
-void
-packet_restore_state(void)
-{
-	ssh_packet_restore_state(active_state, backup_state);
 }
 
 u_int

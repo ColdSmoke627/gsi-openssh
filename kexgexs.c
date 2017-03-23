@@ -1,4 +1,4 @@
-/* $OpenBSD: kexgexs.c,v 1.25 2015/04/13 02:04:08 djm Exp $ */
+/* $OpenBSD: kexgexs.c,v 1.29 2016/06/08 02:13:01 dtucker Exp $ */
 /*
  * Copyright (c) 2000 Niels Provos.  All rights reserved.
  * Copyright (c) 2001 Markus Friedl.  All rights reserved.
@@ -73,6 +73,7 @@ input_kex_dh_gex_request(int type, u_int32_t seq, void *ctxt)
 	struct kex *kex = ssh->kex;
 	int r;
 	u_int min = 0, max = 0, nbits = 0;
+	const BIGNUM *p, *g;
 
 	debug("SSH2_MSG_KEX_DH_GEX_REQUEST received");
 	if ((r = sshpkt_get_u32(ssh, &min)) != 0 ||
@@ -89,7 +90,7 @@ input_kex_dh_gex_request(int type, u_int32_t seq, void *ctxt)
 	nbits = MIN(DH_GRP_MAX, nbits);
 
 	if (kex->max < kex->min || kex->nbits < kex->min ||
-	    kex->max < kex->nbits) {
+	    kex->max < kex->nbits || kex->max < DH_GRP_MIN) {
 		r = SSH_ERR_DH_GEX_OUT_OF_RANGE;
 		goto out;
 	}
@@ -102,9 +103,10 @@ input_kex_dh_gex_request(int type, u_int32_t seq, void *ctxt)
 		goto out;
 	}
 	debug("SSH2_MSG_KEX_DH_GEX_GROUP sent");
+	DH_get0_pqg(kex->dh, &p, NULL, &g);
 	if ((r = sshpkt_start(ssh, SSH2_MSG_KEX_DH_GEX_GROUP)) != 0 ||
-	    (r = sshpkt_put_bignum2(ssh, kex->dh->p)) != 0 ||
-	    (r = sshpkt_put_bignum2(ssh, kex->dh->g)) != 0 ||
+	    (r = sshpkt_put_bignum2(ssh, p)) != 0 ||
+	    (r = sshpkt_put_bignum2(ssh, g)) != 0 ||
 	    (r = sshpkt_send(ssh)) != 0)
 		goto out;
 
@@ -116,6 +118,10 @@ input_kex_dh_gex_request(int type, u_int32_t seq, void *ctxt)
 	ssh_dispatch_set(ssh, SSH2_MSG_KEX_DH_GEX_INIT, &input_kex_dh_gex_init);
 	r = 0;
  out:
+	if (r != 0) {
+		DH_free(kex->dh);
+		kex->dh = NULL;
+	}
 	return r;
 }
 
@@ -131,6 +137,7 @@ input_kex_dh_gex_init(int type, u_int32_t seq, void *ctxt)
 	size_t sbloblen, slen;
 	size_t klen = 0, hashlen;
 	int kout, r;
+	const BIGNUM *p, *g, *pub_key;
 
 	if (kex->load_host_public_key == NULL ||
 	    kex->load_host_private_key == NULL) {
@@ -193,6 +200,8 @@ input_kex_dh_gex_init(int type, u_int32_t seq, void *ctxt)
 		goto out;
 	/* calc H */
 	hashlen = sizeof(hash);
+	DH_get0_pqg(kex->dh, &p, NULL, &g);
+	DH_get0_key(kex->dh, &pub_key, NULL);
 	if ((r = kexgex_hash(
 	    kex->hash_alg,
 	    kex->client_version_string,
@@ -201,9 +210,9 @@ input_kex_dh_gex_init(int type, u_int32_t seq, void *ctxt)
 	    sshbuf_ptr(kex->my), sshbuf_len(kex->my),
 	    server_host_key_blob, sbloblen,
 	    kex->min, kex->nbits, kex->max,
-	    kex->dh->p, kex->dh->g,
+	    p, g,
 	    dh_client_pub,
-	    kex->dh->pub_key,
+	    pub_key,
 	    shared_secret,
 	    hash, &hashlen)) != 0)
 		goto out;
@@ -220,8 +229,8 @@ input_kex_dh_gex_init(int type, u_int32_t seq, void *ctxt)
 	}
 
 	/* sign H */
-	if ((r = kex->sign(server_host_private, server_host_public,
-	    &signature, &slen, hash, hashlen, ssh->compat)) < 0)
+	if ((r = kex->sign(server_host_private, server_host_public, &signature,
+	     &slen, hash, hashlen, kex->hostkey_alg, ssh->compat)) < 0)
 		goto out;
 
 	/* destroy_sensitive_data(); */
@@ -229,7 +238,7 @@ input_kex_dh_gex_init(int type, u_int32_t seq, void *ctxt)
 	/* send server hostkey, DH pubkey 'f' and singed H */
 	if ((r = sshpkt_start(ssh, SSH2_MSG_KEX_DH_GEX_REPLY)) != 0 ||
 	    (r = sshpkt_put_string(ssh, server_host_key_blob, sbloblen)) != 0 ||
-	    (r = sshpkt_put_bignum2(ssh, kex->dh->pub_key)) != 0 ||     /* f */
+	    (r = sshpkt_put_bignum2(ssh, pub_key)) != 0 ||     /* f */
 	    (r = sshpkt_put_string(ssh, signature, slen)) != 0 ||
 	    (r = sshpkt_send(ssh)) != 0)
 		goto out;

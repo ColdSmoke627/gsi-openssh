@@ -1,6 +1,5 @@
-/* $OpenBSD: roaming_dummy.c,v 1.4 2015/01/19 19:52:16 markus Exp $ */
 /*
- * Copyright (c) 2004-2009 AppGate Network Security AB
+ * Copyright (c) 2016 Darren Tucker.  All rights reserved.
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -15,58 +14,30 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-/*
- * This file is included in the client programs which should not
- * support roaming.
- */
-
 #include "includes.h"
 
 #include <sys/types.h>
-#include <unistd.h>
+#if defined(HAVE_SYS_PRCTL_H)
+#include <sys/prctl.h>	/* For prctl() and PR_SET_DUMPABLE */
+#endif
+#ifdef HAVE_PRIV_H
+#include <priv.h> /* For setpflags() and __PROC_PROTECT  */
+#endif
+#include <stdarg.h>
 
-#include "roaming.h"
-
-int resume_in_progress = 0;
-
-u_int64_t
-get_recv_bytes(void)
-{
-	return 0;
-}
-
-u_int64_t
-get_sent_bytes(void)
-{
-	return 0;
-}
+#include "log.h"
 
 void
-roam_set_bytes(u_int64_t sent, u_int64_t recvd)
+platform_disable_tracing(int strict)
 {
-}
-
-ssize_t
-roaming_write(int fd, const void *buf, size_t count, int *cont)
-{
-	return write(fd, buf, count);
-}
-
-ssize_t
-roaming_read(int fd, void *buf, size_t count, int *cont)
-{
-	if (cont)
-		*cont = 0;
-	return read(fd, buf, count);
-}
-
-void
-add_recv_bytes(u_int64_t num)
-{
-}
-
-int
-resume_kex(void)
-{
-	return 1;
+#if defined(HAVE_PRCTL) && defined(PR_SET_DUMPABLE)
+	/* Disable ptrace on Linux without sgid bit */
+	if (prctl(PR_SET_DUMPABLE, 0) != 0 && strict)
+		fatal("unable to make the process undumpable");
+#endif
+#if defined(HAVE_SETPFLAGS) && defined(__PROC_PROTECT)
+	/* On Solaris, we should make this process untraceable */
+	if (setpflags(__PROC_PROTECT, 1) != 0 && strict)
+		fatal("unable to make the process untraceable");
+#endif
 }

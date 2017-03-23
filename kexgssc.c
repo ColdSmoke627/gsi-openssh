@@ -62,6 +62,7 @@ kexgss_client(struct ssh *ssh) {
 	BIGNUM *shared_secret = NULL;
 	BIGNUM *p = NULL;
 	BIGNUM *g = NULL;	
+	const BIGNUM *pub_key, *p1, *g1;
 	u_char *kbuf = NULL;
     u_char hash[SSH_DIGEST_MAX_LENGTH];
 	u_char *serverhostkey = NULL;
@@ -91,6 +92,15 @@ kexgss_client(struct ssh *ssh) {
 		break;
 	case KEX_GSS_GRP14_SHA1:
 		dh = dh_new_group14();
+		break;
+	case KEX_GSS_GRP14_SHA256:
+		dh = dh_new_group14();
+		break;
+	case KEX_GSS_GRP16_SHA512:
+		dh = dh_new_group16();
+		break;
+	case KEX_GSS_GRP18_SHA512:
+		dh = dh_new_group18();
 		break;
 	case KEX_GSS_GEX_SHA1:
 		debug("Doing group exchange\n");
@@ -124,6 +134,7 @@ kexgss_client(struct ssh *ssh) {
 	
 	/* Step 1 - e is dh->pub_key */
 	dh_gen_key(dh, kex->we_need * 8);
+	DH_get0_key(dh, &pub_key, NULL);
 
 	/* This is f, we initialise it now to make life easier */
 	dh_server_pub = BN_new();
@@ -171,7 +182,7 @@ kexgss_client(struct ssh *ssh) {
 				packet_start(SSH2_MSG_KEXGSS_INIT);
 				packet_put_string(send_tok.value,
 				    send_tok.length);
-				packet_put_bignum2(dh->pub_key);
+				packet_put_bignum2((BIGNUM *)pub_key);
 				first = 0;
 			} else {
 				packet_start(SSH2_MSG_KEXGSS_CONTINUE);
@@ -273,18 +284,22 @@ kexgss_client(struct ssh *ssh) {
 	switch (kex->kex_type) {
 	case KEX_GSS_GRP1_SHA1:
 	case KEX_GSS_GRP14_SHA1:
-		kex_dh_hash( kex->client_version_string, 
+	case KEX_GSS_GRP14_SHA256:
+	case KEX_GSS_GRP16_SHA512:
+	case KEX_GSS_GRP18_SHA512:
+		kex_dh_hash( kex->hash_alg, kex->client_version_string, 
 		    kex->server_version_string,
 		    buffer_ptr(kex->my), buffer_len(kex->my),
 		    buffer_ptr(kex->peer), buffer_len(kex->peer),
 		    (serverhostkey ? serverhostkey : empty), slen,
-		    dh->pub_key,	/* e */
+		    pub_key,		/* e */
 		    dh_server_pub,	/* f */
 		    shared_secret,	/* K */
 		    hash, &hashlen
 		);
 		break;
 	case KEX_GSS_GEX_SHA1:
+		DH_get0_pqg(dh, &p1, NULL, &g1);
 		kexgex_hash(
 		    kex->hash_alg,
 		    kex->client_version_string,
@@ -293,8 +308,8 @@ kexgss_client(struct ssh *ssh) {
 		    buffer_ptr(kex->peer), buffer_len(kex->peer),
 		    (serverhostkey ? serverhostkey : empty), slen,
  		    min, nbits, max,
-		    dh->p, dh->g,
-		    dh->pub_key,
+		    p1, g1,
+		    pub_key,
 		    dh_server_pub,
 		    shared_secret,
 		    hash, &hashlen
