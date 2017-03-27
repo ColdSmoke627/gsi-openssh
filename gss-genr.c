@@ -352,6 +352,7 @@ ssh_gssapi_init_ctx(Gssctxt *ctx, int deleg_creds, gss_buffer_desc *recv_tok,
     gss_buffer_desc* send_tok, OM_uint32 *flags)
 {
 	int deleg_flag = 0;
+	int conf_flag = 0;
 
 	if (deleg_creds) {
 		deleg_flag = GSS_C_DELEG_FLAG;
@@ -362,10 +363,12 @@ ssh_gssapi_init_ctx(Gssctxt *ctx, int deleg_creds, gss_buffer_desc *recv_tok,
 	 * not returning correct key material on CentOS6 with OpenSSL 1.0.1e build 48.
 	 * See: https://github.com/globus/globus-toolkit/issues/92
 	 */
+	if (getenv("GSISSH_FORCE_CONF_FLAG") != NULL)
+		conf_flag = GSS_C_CONF_FLAG;
 
 	ctx->major = gss_init_sec_context(&ctx->minor,
 	    ctx->client_creds, &ctx->context, ctx->name, ctx->oid,
-	    GSS_C_MUTUAL_FLAG | GSS_C_INTEG_FLAG | GSS_C_CONF_FLAG | deleg_flag,
+	    GSS_C_MUTUAL_FLAG | GSS_C_INTEG_FLAG | conf_flag | deleg_flag,
 	    0, NULL, recv_tok, NULL, send_tok, flags, NULL);
 
 	if (GSS_ERROR(ctx->major))
