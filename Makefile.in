@@ -97,7 +97,7 @@ LIBSSH_OBJS=${LIBOPENSSH_OBJS} \
 
 SSHOBJS= ssh.o readconf.o clientloop.o sshtty.o \
 	sshconnect.o sshconnect1.o sshconnect2.o mux.o \
-	modp_burl.o nersc.o
+	modp_burl.o nersc.o auth-compat.o
 
 SSHDOBJS=sshd.o auth-rhosts.o auth-passwd.o auth-rsa.o auth-rh-rsa.o \
 	audit.o audit-bsm.o audit-linux.o platform.o \
