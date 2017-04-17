@@ -75,6 +75,7 @@
 
 #ifdef GSSAPI
 #include "ssh-gss.h"
+#include "auth-compat.h"
 #endif
 
 /* import */
