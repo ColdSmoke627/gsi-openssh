@@ -17,7 +17,98 @@
 AC_INIT([OpenSSH], [Portable], [openssh-unix-dev@mindrot.org])
 AC_REVISION($Revision: 1.583 $)
 AC_CONFIG_SRCDIR([ssh.c])
+m4_include([ltoptions.m4])
+m4_include([ltversion.m4])
+m4_include([libtool.m4])
+m4_include([ltsugar.m4])
+m4_include([lt~obsolete.m4])
+m4_include([pkg.m4])
 AC_LANG([C])
+
+# Handle Globus configuration right away, because the Globus flavor
+# determines our compiler options.
+
+# Check whether the user wants GSSAPI mechglue support
+AC_ARG_WITH(mechglue,
+	[  --with-mechglue=PATH    Build with GSSAPI mechglue library],
+	[
+		AC_MSG_CHECKING(for mechglue library)
+
+		if test -e ${withval}/libgssapi.a ; then
+		    mechglue_lib=${withval}/libgssapi.a
+		elif test -e ${withval}/lib/libgssapi.a ; then
+		    mechglue_lib=${withval}/lib/libgssapi.a
+		else
+		    AC_MSG_ERROR("Can't find libgssapi in ${withval}");
+		fi
+		GLOBUS_LIBS="${mechglue_lib} $GLOBUS_LIBS"
+		AC_MSG_RESULT(${mechglue_lib})
+
+		AC_CHECK_LIB(dl, dlopen, , )
+		if test $ac_cv_lib_dl_dlopen = yes; then
+		   LDFLAGS="$LDFLAGS -ldl -Wl,-Bsymbolic"
+		fi
+
+		AC_DEFINE(GSSAPI)
+		AC_DEFINE(MECHGLUE, 1, [Define this if you're building with GSSAPI MechGlue.])
+		GSSAPI="mechglue"
+	]
+)
+
+
+# Check whether the user wants GSI (Globus) support
+gsi_path="no"
+program_prefix=""
+LT_INIT
+AC_ARG_WITH([gsi],
+	AS_HELP_STRING(
+		[--with-gsi],
+		[Enable Globus GSI authentication support]),
+	[gsi_path="$withval"])
+
+AC_ARG_WITH([globus],
+	AS_HELP_STRING(
+		[--with-globus],
+		[Enable Globus GSI authentication support]),
+	[gsi_path="$withval"])
+
+PKG_PROG_PKG_CONFIG([0.22])
+
+if test "x$gsi_path" != "xno" ; then
+	# Globus GSSAPI configuration
+	AC_MSG_CHECKING(for Globus GSI)
+	AC_DEFINE(GSI, 1, [Define if you want GSI/Globus authentication support.])
+	if test -z "$GSSAPI"; then
+		AC_DEFINE(GSSAPI)
+		GSSAPI="GSI"
+	fi
+
+
+	# include explicit openssl dependency to get consistent LIBS
+	PKG_CHECK_MODULES([GLOBUS_PKG], [globus-gss-assist >= 2, globus-gssapi-gsi, globus-usage >= 1, globus-common])
+	PKG_CHECK_MODULES([OPENSSL], [openssl])
+
+        CFLAGS="$CFLAGS $OPENSSL_CFLAGS"
+        LDFLAGS="$LDFLAGS $OPENSSL_LIBS"
+
+	GLOBUS_CFLAGS="$CFLAGS $GLOBUS_PKG_CFLAGS"
+	GLOBUS_LIBS="$GLOBUS_LIBS $GLOBUS_PKG_LIBS"
+	LD="\$(LIBTOOL) --mode=link $CC"
+        AC_DEFINE([HAVE_GLOBUS_GSS_ASSIST_MAP_AND_AUTHORIZE], [1],
+		[Have globus_gss_assist_map_and_authorize])
+        AC_DEFINE([HAVE_GLOBUS_USAGE], [1], [Have Globus Usage])
+        AC_DEFINE([HAVE_GLOBUS_USAGE_SEND_ARRAY], [1],
+                        [Have Globus Usage send_array])
+
+	AC_DEFINE(HAVE_GSSAPI_H)
+	AC_SUBST(program_prefix, "gsi")
+fi
+AC_SUBST(GLOBUS_CFLAGS)
+AC_SUBST(GLOBUS_LIBS)
+# End Globus/GSI section
+
+# applies to non-GSI builds as well.
+LD="\$(LIBTOOL) --mode=link $CC"
 
 AC_CONFIG_HEADER([config.h])
 AC_PROG_CC
@@ -183,7 +274,8 @@ if test "$GCC" = "yes" || test "$GCC" = "egcs"; then
 	OSSH_CHECK_CFLAG_COMPILE([-Wunknown-warning-option])
 	OSSH_CHECK_CFLAG_COMPILE([-Wall])
 	OSSH_CHECK_CFLAG_COMPILE([-Wpointer-arith])
-	OSSH_CHECK_CFLAG_COMPILE([-Wuninitialized])
+#	cc1: warning: -Wuninitialized is not supported without -O
+#	OSSH_CHECK_CFLAG_COMPILE([-Wuninitialized])
 	OSSH_CHECK_CFLAG_COMPILE([-Wsign-compare])
 	OSSH_CHECK_CFLAG_COMPILE([-Wformat-security])
 	OSSH_CHECK_CFLAG_COMPILE([-Wsizeof-pointer-memaccess])
@@ -597,21 +689,8 @@ case "$host" in
 	AC_DEFINE([BROKEN_SETREGID])
 	;;
 *-*-darwin*)
-	use_pie=auto
-	AC_MSG_CHECKING([if we have working getaddrinfo])
-	AC_RUN_IFELSE([AC_LANG_SOURCE([[ #include <mach-o/dyld.h>
-main() { if (NSVersionOfRunTimeLibrary("System") >= (60 << 16))
-		exit(0);
-	else
-		exit(1);
-}
-			]])],
-	[AC_MSG_RESULT([working])],
-	[AC_MSG_RESULT([buggy])
-	AC_DEFINE([BROKEN_GETADDRINFO], [1],
-		[getaddrinfo is broken (if present)])
-	],
-	[AC_MSG_RESULT([assume it is working])])
+	CFLAGS="$CFLAGS -Wno-deprecated-declarations" # suppress openssl warns
+	AC_DEFINE(BROKEN_GETADDRINFO, 1, [assume getaddrinfo is broken)])
 	AC_DEFINE([SETEUID_BREAKS_SETUID])
 	AC_DEFINE([BROKEN_SETREUID])
 	AC_DEFINE([BROKEN_SETREGID])
@@ -623,6 +702,30 @@ main() { if (NSVersionOfRunTimeLibrary("System") >= (60 << 16))
 	    [Use tunnel device compatibility to OpenBSD])
 	AC_DEFINE([SSH_TUN_PREPEND_AF], [1],
 	    [Prepend the address family to IP tunnel traffic])
+	AC_MSG_CHECKING(if we have the Security Authorization Session API)
+	AC_TRY_COMPILE([#include <Security/AuthSession.h>],
+		[SessionCreate(0, 0);],
+		[ac_cv_use_security_session_api="yes"
+		 AC_DEFINE(USE_SECURITY_SESSION_API, 1, 
+			[platform has the Security Authorization Session API])
+		 LIBS="$LIBS -framework Security"
+		 AC_MSG_RESULT(yes)],
+		[ac_cv_use_security_session_api="no"
+		 AC_MSG_RESULT(no)])
+	AC_MSG_CHECKING(if we have an in-memory credentials cache)
+	AC_TRY_COMPILE(
+		[#include <Kerberos/Kerberos.h>],
+		[cc_context_t c;
+		 (void) cc_initialize (&c, 0, NULL, NULL);],
+		[AC_DEFINE(USE_CCAPI, 1, 
+			[platform uses an in-memory credentials cache])
+		 LIBS="$LIBS -framework Security"
+		 AC_MSG_RESULT(yes)
+		 if test "x$ac_cv_use_security_session_api" = "xno"; then
+			AC_MSG_ERROR(*** Need a security framework to use the credentials cache API ***)
+		fi],
+		[AC_MSG_RESULT(no)]
+	)
 	m4_pattern_allow([AU_IPv])
 	AC_CHECK_DECL([AU_IPv4], [],
 	    AC_DEFINE([AU_IPv4], [0], [System only supports IPv4 audit records])
@@ -634,6 +737,7 @@ main() { if (NSVersionOfRunTimeLibrary("System") >= (60 << 16))
 		[Define to a Set Process Title type if your system is
 		supported by bsd-setproctitle.c])
 	AC_CHECK_FUNCS([sandbox_init])
+    # unreliable with autoconf pre-2.64 (such as used by GPT)
 	AC_CHECK_HEADERS([sandbox.h])
 	AC_CHECK_LIB([sandbox], [sandbox_apply], [
 	    SSHDLIBS="$SSHDLIBS -lsandbox"
@@ -4363,6 +4467,8 @@ AC_ARG_WITH([kerberos5],
 					])
 				])
 
+			# These headers conflict with GSI headers
+			if test "x$gsi_path" = "xno" ; then
 			AC_CHECK_HEADER([gssapi.h], ,
 				[ unset ac_cv_header_gssapi_h
 				  CPPFLAGS="$CPPFLAGS -I${KRB5ROOT}/include/gssapi"
@@ -4371,13 +4477,28 @@ AC_ARG_WITH([kerberos5],
 				  )
 				]
 			)
+			fi
 
 			oldCPP="$CPPFLAGS"
 			CPPFLAGS="$CPPFLAGS -I${KRB5ROOT}/include/gssapi"
 			AC_CHECK_HEADER([gssapi_krb5.h], ,
 					[ CPPFLAGS="$oldCPP" ])
 
-		fi
+			# If we're using some other GSSAPI
+			if test "$GSSAPI" -a "$GSSAPI" != "mechglue"; then
+				AC_MSG_ERROR([$GSSAPI GSSAPI library conflicts with Kerberos support.  Use mechglue instead.])
+			fi
+
+			if test -z "$GSSAPI"; then
+				GSSAPI="KRB5";
+			fi
+
+			oldCPP="$CPPFLAGS"
+			CPPFLAGS="$CPPFLAGS -I${KRB5ROOT}/include/gssapi"
+			AC_CHECK_HEADER(gssapi_krb5.h, ,
+					[ CPPFLAGS="$oldCPP" ])
+
+                fi
 		if test ! -z "$need_dash_r" ; then
 			LDFLAGS="$LDFLAGS -R${KRB5ROOT}/lib"
 		fi
@@ -4385,9 +4506,12 @@ AC_ARG_WITH([kerberos5],
 			blibpath="$blibpath:${KRB5ROOT}/lib"
 		fi
 
-		AC_CHECK_HEADERS([gssapi.h gssapi/gssapi.h])
+		# These headers conflict with GSI headers
+		if test "x$gsi_path" = "xno" ; then
+		AC_CHECK_HEADERS([gssapi.h gssapi/gssapi.h gssapi/gssapi_ext.h])
 		AC_CHECK_HEADERS([gssapi_krb5.h gssapi/gssapi_krb5.h])
 		AC_CHECK_HEADERS([gssapi_generic.h gssapi/gssapi_generic.h])
+		fi
 
 		AC_SEARCH_LIBS([k_hasafs], [kafs], [AC_DEFINE([USE_AFS], [1],
 			[Define this if you want to use libkafs' AFS support])])
@@ -4398,16 +4522,15 @@ AC_ARG_WITH([kerberos5],
 #elif defined(HAVE_GSSAPI_GSSAPI_H)
 # include <gssapi/gssapi.h>
 #endif
-
-#ifdef HAVE_GSSAPI_GENERIC_H
-# include <gssapi_generic.h>
-#elif defined(HAVE_GSSAPI_GSSAPI_GENERIC_H)
-# include <gssapi/gssapi_generic.h>
-#endif
 		]])
 		saved_LIBS="$LIBS"
-		LIBS="$LIBS $K5LIBS"
+		LIBS="$LIBS $K5LIBS $GSSLIBS"
 		AC_CHECK_FUNCS([krb5_cc_new_unique krb5_get_error_message krb5_free_error_message])
+		AC_CHECK_FUNCS([gss_localname gss_userok])
+		# mechglue library doesn't have gss_indicate_mechs_by_attrs
+		if test "$GSSAPI" -a "$GSSAPI" != "mechglue"; then
+		AC_CHECK_FUNCS([gss_indicate_mechs_by_attrs])
+		fi
 		LIBS="$saved_LIBS"
 
 	fi
@@ -4415,6 +4538,42 @@ AC_ARG_WITH([kerberos5],
 )
 AC_SUBST([GSSLIBS])
 AC_SUBST([K5LIBS])
+
+# Check whether user wants AFS_KRB5 support
+AFS_KRB5_MSG="no"
+AC_ARG_WITH(afs-krb5,
+	[  --with-afs-krb5[[=AKLOG_PATH]]  Enable aklog to get token (default=/usr/bin/aklog).],
+	[
+		if test "x$withval" != "xno" ; then
+
+			if test "x$withval" != "xyes" ; then
+				AC_DEFINE_UNQUOTED(AKLOG_PATH, "$withval",
+					[Define this if you want to use AFS/Kerberos 5 option, which runs aklog.])
+			else
+				AC_DEFINE_UNQUOTED(AKLOG_PATH,
+					"/usr/bin/aklog",
+					[Define this if you want to use AFS/Kerberos 5 option, which runs aklog.])
+			fi
+
+			if test -z "$KRB5ROOT" ; then
+				AC_MSG_WARN([AFS_KRB5 requires Kerberos 5 support, build may fail])
+			fi
+
+			LIBS="-lkrbafs -lkrb4 $LIBS"
+			if test ! -z "$AFS_LIBS" ; then
+				LIBS="$LIBS $AFS_LIBS"
+			fi
+			AC_DEFINE(AFS_KRB5, 1,
+				[Define this if you want to use AFS/Kerberos 5 option, which runs aklog.])
+			AFS_KRB5_MSG="yes"
+		fi
+	]
+)
+
+AC_ARG_WITH(session-hooks,
+        [  --with-session-hooks    Enable hooks for executing external commands                                       before/after a session],
+        [ AC_DEFINE(SESSION_HOOKS, 1, [Define this if you want support for startup/shutdown hooks]) ]
+)
 
 # Looking for programs, paths and files
 
@@ -4451,7 +4610,10 @@ AC_ARG_WITH([xauth],
 	]
 )
 
+# strip causes problems with GSI libraries...
+if test -z "$GLOBUS_LDFLAGS" ; then
 STRIP_OPT=-s
+fi
 AC_ARG_ENABLE([strip],
 	[  --disable-strip         Disable calling strip(1) on install],
 	[

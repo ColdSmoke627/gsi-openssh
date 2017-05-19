@@ -79,6 +79,7 @@
 #include "authfd.h"
 #include "compat.h"
 #include "log.h"
+#include "pathnames.h"
 #include "misc.h"
 #include "digest.h"
 #include "ssherr.h"
@@ -1238,6 +1239,7 @@ main(int ac, char **av)
 #endif
 
 	__progname = ssh_get_progname(av[0]);
+	init_pathnames();
 	seed_rng();
 
 	while ((ch = getopt(ac, av, "cDdksE:a:P:t:")) != -1) {

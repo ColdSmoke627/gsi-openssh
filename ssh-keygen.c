@@ -2284,6 +2284,7 @@ main(int argc, char **argv)
 	sanitise_stdfd();
 
 	__progname = ssh_get_progname(argv[0]);
+	init_pathnames();
 
 #ifdef WITH_OPENSSL
 	OpenSSL_add_all_algorithms();
