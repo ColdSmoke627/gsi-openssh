@@ -757,12 +757,13 @@ The default is
 .It Cm GSSAPIAuthentication
 Specifies whether user authentication based on GSSAPI is allowed.
 The default is
-.Cm no .
+.Cm yes .
+Note that this option applies to protocol version 2 only.
 .It Cm GSSAPIDelegateCredentials
 Forward (delegate) credentials to the server.
 The default is
 .Cm yes .
-Note that this option applies to protocol version 2 only.
+Note that this option applies to protocol version 2 connections using GSSAPI.
 .It Cm GSSAPIKeyExchange
 Specifies whether key exchange based on GSSAPI may be used. When using
 GSSAPI key exchange the server need not have a host key.
@@ -785,8 +786,8 @@ then renewal of the client's GSSAPI credentials will force the rekeying of the
 ssh connection. With a compatible server, this can delegate the renewed 
 credentials to a session on the server.
 The default is
-.Cm yes .
-.It Cm GSSAPITrustDns
+.Cm no .
+.It Cm GSSAPITrustDNS
 Set to 
 .Cm yes to indicate that the DNS is trusted to securely canonicalize
 the name of the host being connected to. If 
