@@ -128,6 +128,7 @@ Subsystem	sftp	/usr/libexec/sftp-server
 
 # disable hpn performance boosts
 #HPNDisabled no
+DisableMTAES yes
 
 # buffer size for hpn to non-hpn connections
 #HPNBufferSize 2048
