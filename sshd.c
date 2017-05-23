@@ -1479,6 +1479,7 @@ main(int ac, char **av)
 	(void)set_auth_parameters(ac, av);
 #endif
 	__progname = ssh_get_progname(av[0]);
+	OpenSSL_add_all_algorithms();
 	init_pathnames();
 	config_file_name = _PATH_SERVER_CONFIG_FILE;
 
