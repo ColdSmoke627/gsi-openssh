@@ -148,6 +148,7 @@ static const struct sock_filter preauth_insns[] = {
 	SC_DENY(__NR_stat64, EACCES),
 #endif
 #endif
+
 	/* Syscalls to permit */
 #ifdef __NR_brk
 	SC_ALLOW(__NR_brk),
@@ -157,12 +158,6 @@ static const struct sock_filter preauth_insns[] = {
 #endif
 #ifdef __NR_close
 	SC_ALLOW(__NR_close),
-#endif
-#ifdef __NR_getpeername /* not defined on archs that go via socketcall(2) */
-	SC_ALLOW(getpeername),
-#endif
-#ifdef __NR_getpgid
-	SC_ALLOW(getpgid),
 #endif
 #ifdef __NR_exit
 	SC_ALLOW(__NR_exit),
@@ -212,13 +207,20 @@ static const struct sock_filter preauth_insns[] = {
 #ifdef __NR_read
 	SC_ALLOW(__NR_read),
 #endif
-	SC_ALLOW(exit_group),
 
 #ifdef NERSC_MOD
-	SC_ALLOW(sendto),
-	SC_ALLOW(stat),
-	SC_ALLOW(socket),
-	SC_ALLOW(connect),
+#ifdef __NR_sendto
+	SC_ALLOW(__NR_sendto),
+#endif
+#ifdef __NR_stat
+	SC_ALLOW(__NR_stat),
+#endif
+#ifdef __NR_socket
+	SC_ALLOW(__NR_socket),
+#endif
+#ifdef __NR_connect
+	SC_ALLOW(__NR_connect),
+#endif
 #endif
 
 #ifdef __NR_rt_sigprocmask
@@ -235,9 +237,6 @@ static const struct sock_filter preauth_insns[] = {
 #endif
 #ifdef __NR_socketcall
 	SC_ALLOW(__NR_socketcall),
-#endif
-#ifdef __NR_socketcall
-	SC_ALLOW(socketcall),
 #endif
 #ifdef __NR_time
 	SC_ALLOW(__NR_time),
