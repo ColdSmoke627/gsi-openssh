@@ -1,6 +1,6 @@
-/* $OpenBSD: version.h,v 1.77 2016/07/24 11:45:36 djm Exp $ */
+/* $OpenBSD: version.h,v 1.79 2017/03/20 01:18:59 djm Exp $ */
 
-#define SSH_VERSION	"OpenSSH_7.3"
+#define SSH_VERSION	"OpenSSH_7.5"
 #ifdef GSI
 #define GSI_VERSION	" GSI"
 #else
@@ -20,8 +20,8 @@
 #endif
 
 #define SSH_PORTABLE	"p1"
-#define GSI_PORTABLE	"c-GSI"
-#define SSH_HPN		"-hpn14v12"
+#define GSI_PORTABLE	"-GSI"
+#define SSH_HPN		"-hpn14v13"
 #define SSH_RELEASE	SSH_VERSION SSH_PORTABLE SSH_HPN
 
 #ifdef NERSC_MOD

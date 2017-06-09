@@ -1,4 +1,4 @@
-/* $OpenBSD: sshkey.c,v 1.35 2016/06/19 07:48:02 djm Exp $ */
+/* $OpenBSD: sshkey.c,v 1.45 2017/03/10 04:07:20 djm Exp $ */
 /*
  * Copyright (c) 2000, 2001 Markus Friedl.  All rights reserved.
  * Copyright (c) 2008 Alexander von Gernler.  All rights reserved.
@@ -27,7 +27,6 @@
 
 #include "includes.h"
 
-#include <sys/param.h>	/* MIN MAX */
 #include <sys/types.h>
 #include <netinet/in.h>
 
@@ -90,7 +89,9 @@ static const struct keytype keytypes[] = {
 	{ "ssh-ed25519-cert-v01@openssh.com", "ED25519-CERT",
 	    KEY_ED25519_CERT, 0, 1, 0 },
 #ifdef WITH_OPENSSL
+# ifdef WITH_SSH1
 	{ NULL, "RSA1", KEY_RSA1, 0, 0, 0 },
+# endif
 	{ "ssh-rsa", "RSA", KEY_RSA, 0, 0, 0 },
 	{ "rsa-sha2-256", "RSA", KEY_RSA, 0, 0, 1 },
 	{ "rsa-sha2-512", "RSA", KEY_RSA, 0, 0, 1 },
@@ -199,19 +200,21 @@ sshkey_ecdsa_nid_from_name(const char *name)
 }
 
 char *
-key_alg_list(int certs_only, int plain_only)
+sshkey_alg_list(int certs_only, int plain_only, int include_sigonly, char sep)
 {
 	char *tmp, *ret = NULL;
 	size_t nlen, rlen = 0;
 	const struct keytype *kt;
 
 	for (kt = keytypes; kt->type != -1; kt++) {
-		if (kt->name == NULL || kt->sigonly)
+		if (kt->name == NULL)
+			continue;
+		if (!include_sigonly && kt->sigonly)
 			continue;
 		if ((certs_only && !kt->cert) || (plain_only && kt->cert))
 			continue;
 		if (ret != NULL)
-			ret[rlen++] = '\n';
+			ret[rlen++] = sep;
 		nlen = strlen(kt->name);
 		if ((tmp = realloc(ret, rlen + nlen + 2)) == NULL) {
 			free(ret);
@@ -506,7 +509,6 @@ sshkey_new(int type)
 	default:
 		free(k);
 		return NULL;
-		break;
 	}
 
 	if (sshkey_is_cert(k)) {
@@ -900,9 +902,12 @@ sshkey_fingerprint_raw(const struct sshkey *k, int dgst_alg,
 		nlen = BN_num_bytes(n);
 		elen = BN_num_bytes(e);
 
+		if (nlen < 0 || elen < 0 || nlen >= INT_MAX - elen) {
+			r = SSH_ERR_INVALID_FORMAT;
+			goto out;
+		}
 		blob_len = nlen + elen;
-		if (nlen >= INT_MAX - elen ||
-		    (blob = malloc(blob_len)) == NULL) {
+		if ((blob = malloc(blob_len)) == NULL) {
 			r = SSH_ERR_ALLOC_FAIL;
 			goto out;
 		}
@@ -1094,10 +1099,10 @@ fingerprint_randomart(const char *alg, u_char *dgst_raw, size_t dgst_raw_len,
 			y += (input & 0x2) ? 1 : -1;
 
 			/* assure we are still in bounds */
-			x = MAX(x, 0);
-			y = MAX(y, 0);
-			x = MIN(x, FLDSIZE_X - 1);
-			y = MIN(y, FLDSIZE_Y - 1);
+			x = MAXIMUM(x, 0);
+			y = MAXIMUM(y, 0);
+			x = MINIMUM(x, FLDSIZE_X - 1);
+			y = MINIMUM(y, FLDSIZE_Y - 1);
 
 			/* augment the field */
 			if (field[x][y] < len - 2)
@@ -1138,7 +1143,7 @@ fingerprint_randomart(const char *alg, u_char *dgst_raw, size_t dgst_raw_len,
 	for (y = 0; y < FLDSIZE_Y; y++) {
 		*p++ = '|';
 		for (x = 0; x < FLDSIZE_X; x++)
-			*p++ = augmentation_string[MIN(field[x][y], len)];
+			*p++ = augmentation_string[MINIMUM(field[x][y], len)];
 		*p++ = '|';
 		*p++ = '\n';
 	}
@@ -1248,6 +1253,9 @@ sshkey_read(struct sshkey *ret, char **cpp)
 	u_long bits;
 	BIGNUM *e = NULL, *n = NULL;
 #endif /* WITH_SSH1 */
+
+	if (ret == NULL)
+		return SSH_ERR_INVALID_ARGUMENT;
 
 	cp = *cpp;
 
@@ -2976,38 +2984,28 @@ sshkey_private_deserialize(struct sshbuf *buf, struct sshkey **kp)
 		}
 		break;
 	case KEY_RSA_CERT: {
-			BIGNUM *n, *e, *d, *iqmp, *p, *q;
+			BIGNUM *d, *iqmp, *p, *q;
 
-			/* N can't be zero because it breaks blinding (seed). Count it now */
-			/* E is zero because it is not in the protocol, but needed for RSA structure */
-			n = BN_new();
-			e = BN_new();
+			/* N and E are already set so make sure we will not overwrite them */
 			d = BN_new();
 			iqmp = BN_new();
 			p = BN_new();
 			q = BN_new();
-			BN_CTX *ctx = BN_CTX_new();
 
-			if (n == NULL || e == NULL || d == NULL ||
-			    iqmp == NULL || p == NULL || q == NULL ||
-			    ctx == NULL ||
+			if (d == NULL || iqmp == NULL || p == NULL ||
+			    q == NULL ||
 			    (r = sshkey_froms(buf, &k)) != 0 ||
 			    (r = sshkey_add_private(k)) != 0 ||
 			    (r = sshbuf_get_bignum2(buf, d)) != 0 ||
 			    (r = sshbuf_get_bignum2(buf, iqmp)) != 0 ||
 			    (r = sshbuf_get_bignum2(buf, p)) != 0 ||
 			    (r = sshbuf_get_bignum2(buf, q)) != 0 ||
-			    (r = ((BN_mul(n, p, q, ctx) == 0)           /* N = P * Q */
-			        ? SSH_ERR_LIBCRYPTO_ERROR : 0)) != 0 ||
-			    (r = ((RSA_set0_key(k->rsa, n, e, d) == 0)
+			    (r = ((RSA_set0_key(k->rsa, NULL, NULL, d) == 0)
 			        ? SSH_ERR_LIBCRYPTO_ERROR : 0)) != 0 ||
 			    (r = ((RSA_set0_factors(k->rsa, p, q) == 0)
 			        ? SSH_ERR_LIBCRYPTO_ERROR : 0)) != 0 ||
-			    (r = rsa_generate_additional_parameters(k->rsa, iqmp)) != 0) {
-				BN_CTX_free(ctx);
+			    (r = rsa_generate_additional_parameters(k->rsa, iqmp)) != 0)
 				goto out;
-			}
-			BN_CTX_free(ctx);
 		}
 		break;
 #endif /* WITH_OPENSSL */
@@ -3091,6 +3089,14 @@ sshkey_ec_validate_public(const EC_GROUP *group, const EC_POINT *public)
 	EC_POINT *nq = NULL;
 	BIGNUM *order, *x, *y, *tmp;
 	int ret = SSH_ERR_KEY_INVALID_EC_VALUE;
+
+	/*
+	 * NB. This assumes OpenSSL has already verified that the public
+	 * point lies on the curve. This is done by EC_POINT_oct2point()
+	 * implicitly calling EC_POINT_is_on_curve(). If this code is ever
+	 * reachable with public points not unmarshalled using
+	 * EC_POINT_oct2point then the caller will need to explicitly check.
+	 */
 
 	if ((bnctx = BN_CTX_new()) == NULL)
 		return SSH_ERR_ALLOC_FAIL;
@@ -3259,12 +3265,10 @@ sshkey_private_to_blob2(const struct sshkey *prv, struct sshbuf *blob,
 	size_t i, pubkeylen, keylen, ivlen, blocksize, authlen;
 	u_int check;
 	int r = SSH_ERR_INTERNAL_ERROR;
-	struct sshcipher_ctx ciphercontext;
+	struct sshcipher_ctx *ciphercontext = NULL;
 	const struct sshcipher *cipher;
 	const char *kdfname = KDFNAME;
 	struct sshbuf *encoded = NULL, *encrypted = NULL, *kdf = NULL;
-
-	memset(&ciphercontext, 0, sizeof(ciphercontext));
 
 	if (rounds <= 0)
 		rounds = DEFAULT_ROUNDS;
@@ -3352,7 +3356,7 @@ sshkey_private_to_blob2(const struct sshkey *prv, struct sshbuf *blob,
 	if ((r = sshbuf_reserve(encoded,
 	    sshbuf_len(encrypted) + authlen, &cp)) != 0)
 		goto out;
-	if ((r = cipher_crypt(&ciphercontext, 0, cp,
+	if ((r = cipher_crypt(ciphercontext, 0, cp,
 	    sshbuf_ptr(encrypted), sshbuf_len(encrypted), 0, authlen)) != 0)
 		goto out;
 
@@ -3384,7 +3388,7 @@ sshkey_private_to_blob2(const struct sshkey *prv, struct sshbuf *blob,
 	sshbuf_free(kdf);
 	sshbuf_free(encoded);
 	sshbuf_free(encrypted);
-	cipher_cleanup(&ciphercontext);
+	cipher_free(ciphercontext);
 	explicit_bzero(salt, sizeof(salt));
 	if (key != NULL) {
 		explicit_bzero(key, keylen + ivlen);
@@ -3413,12 +3417,11 @@ sshkey_parse_private2(struct sshbuf *blob, int type, const char *passphrase,
 	size_t i, keylen = 0, ivlen = 0, authlen = 0, slen = 0;
 	struct sshbuf *encoded = NULL, *decoded = NULL;
 	struct sshbuf *kdf = NULL, *decrypted = NULL;
-	struct sshcipher_ctx ciphercontext;
+	struct sshcipher_ctx *ciphercontext = NULL;
 	struct sshkey *k = NULL;
 	u_char *key = NULL, *salt = NULL, *dp, pad, last;
 	u_int blocksize, rounds, nkeys, encrypted_len, check1, check2;
 
-	memset(&ciphercontext, 0, sizeof(ciphercontext));
 	if (keyp != NULL)
 		*keyp = NULL;
 	if (commentp != NULL)
@@ -3547,7 +3550,7 @@ sshkey_parse_private2(struct sshbuf *blob, int type, const char *passphrase,
 	    (r = cipher_init(&ciphercontext, cipher, key, keylen,
 	    key + keylen, ivlen, 0)) != 0)
 		goto out;
-	if ((r = cipher_crypt(&ciphercontext, 0, dp, sshbuf_ptr(decoded),
+	if ((r = cipher_crypt(ciphercontext, 0, dp, sshbuf_ptr(decoded),
 	    encrypted_len, 0, authlen)) != 0) {
 		/* an integrity error here indicates an incorrect passphrase */
 		if (r == SSH_ERR_MAC_INVALID)
@@ -3601,7 +3604,7 @@ sshkey_parse_private2(struct sshbuf *blob, int type, const char *passphrase,
 	}
  out:
 	pad = 0;
-	cipher_cleanup(&ciphercontext);
+	cipher_free(ciphercontext);
 	free(ciphername);
 	free(kdfname);
 	free(comment);
@@ -3635,7 +3638,7 @@ sshkey_private_rsa1_to_blob(struct sshkey *key, struct sshbuf *blob,
 	struct sshbuf *buffer = NULL, *encrypted = NULL;
 	u_char buf[8];
 	int r, cipher_num;
-	struct sshcipher_ctx ciphercontext;
+	struct sshcipher_ctx *ciphercontext = NULL;
 	const struct sshcipher *cipher;
 	u_char *cp;
 	const BIGNUM *n, *e, *d, *q, *p, *iqmp;
@@ -3709,16 +3712,14 @@ sshkey_private_rsa1_to_blob(struct sshkey *key, struct sshbuf *blob,
 	if ((r = cipher_set_key_string(&ciphercontext, cipher, passphrase,
 	    CIPHER_ENCRYPT)) != 0)
 		goto out;
-	if ((r = cipher_crypt(&ciphercontext, 0, cp,
+	if ((r = cipher_crypt(ciphercontext, 0, cp,
 	    sshbuf_ptr(buffer), sshbuf_len(buffer), 0, 0)) != 0)
-		goto out;
-	if ((r = cipher_cleanup(&ciphercontext)) != 0)
 		goto out;
 
 	r = sshbuf_putb(blob, encrypted);
 
  out:
-	explicit_bzero(&ciphercontext, sizeof(ciphercontext));
+	cipher_free(ciphercontext);
 	explicit_bzero(buf, sizeof(buf));
 	sshbuf_free(buffer);
 	sshbuf_free(encrypted);
@@ -3895,7 +3896,7 @@ sshkey_parse_private_rsa1(struct sshbuf *blob, const char *passphrase,
 	struct sshbuf *decrypted = NULL, *copy = NULL;
 	u_char *cp;
 	char *comment = NULL;
-	struct sshcipher_ctx ciphercontext;
+	struct sshcipher_ctx *ciphercontext = NULL;
 	const struct sshcipher *cipher;
 	struct sshkey *prv = NULL;
 	BIGNUM *n = NULL, *e = NULL, *d = NULL, *q = NULL, *p = NULL,
@@ -3961,12 +3962,8 @@ sshkey_parse_private_rsa1(struct sshbuf *blob, const char *passphrase,
 	if ((r = cipher_set_key_string(&ciphercontext, cipher, passphrase,
 	    CIPHER_DECRYPT)) != 0)
 		goto out;
-	if ((r = cipher_crypt(&ciphercontext, 0, cp,
-	    sshbuf_ptr(copy), sshbuf_len(copy), 0, 0)) != 0) {
-		cipher_cleanup(&ciphercontext);
-		goto out;
-	}
-	if ((r = cipher_cleanup(&ciphercontext)) != 0)
+	if ((r = cipher_crypt(ciphercontext, 0, cp,
+	    sshbuf_ptr(copy), sshbuf_len(copy), 0, 0)) != 0)
 		goto out;
 
 	if ((r = sshbuf_get_u16(decrypted, &check1)) != 0 ||
@@ -4014,7 +4011,7 @@ sshkey_parse_private_rsa1(struct sshbuf *blob, const char *passphrase,
 		comment = NULL;
 	}
  out:
-	explicit_bzero(&ciphercontext, sizeof(ciphercontext));
+	cipher_free(ciphercontext);
 	free(comment);
 	sshkey_free(prv);
 	sshbuf_free(copy);
@@ -4046,7 +4043,48 @@ sshkey_parse_private_pem_fileblob(struct sshbuf *blob, int type,
 
 	if ((pk = PEM_read_bio_PrivateKey(bio, NULL, NULL,
 	    (char *)passphrase)) == NULL) {
-		r = SSH_ERR_KEY_WRONG_PASSPHRASE;
+		unsigned long pem_err = ERR_peek_last_error();
+		int pem_reason = ERR_GET_REASON(pem_err);
+
+		/*
+		 * Translate OpenSSL error codes to determine whether
+		 * passphrase is required/incorrect.
+		 */
+		switch (ERR_GET_LIB(pem_err)) {
+		case ERR_LIB_PEM:
+			switch (pem_reason) {
+			case PEM_R_BAD_PASSWORD_READ:
+			case PEM_R_PROBLEMS_GETTING_PASSWORD:
+			case PEM_R_BAD_DECRYPT:
+				r = SSH_ERR_KEY_WRONG_PASSPHRASE;
+				goto out;
+			default:
+				r = SSH_ERR_INVALID_FORMAT;
+				goto out;
+			}
+		case ERR_LIB_EVP:
+			switch (pem_reason) {
+			case EVP_R_BAD_DECRYPT:
+				r = SSH_ERR_KEY_WRONG_PASSPHRASE;
+				goto out;
+#ifdef EVP_R_BN_DECODE_ERROR
+			case EVP_R_BN_DECODE_ERROR:
+#endif
+			case EVP_R_DECODE_ERROR:
+#ifdef EVP_R_PRIVATE_KEY_DECODE_ERROR
+			case EVP_R_PRIVATE_KEY_DECODE_ERROR:
+#endif
+				r = SSH_ERR_INVALID_FORMAT;
+				goto out;
+			default:
+				r = SSH_ERR_LIBCRYPTO_ERROR;
+				goto out;
+			}
+		case ERR_LIB_ASN1:
+			r = SSH_ERR_INVALID_FORMAT;
+			goto out;
+		}
+		r = SSH_ERR_LIBCRYPTO_ERROR;
 		goto out;
 	}
 	if (EVP_PKEY_id(pk) == EVP_PKEY_RSA &&
@@ -4120,6 +4158,8 @@ int
 sshkey_parse_private_fileblob_type(struct sshbuf *blob, int type,
     const char *passphrase, struct sshkey **keyp, char **commentp)
 {
+	int r = SSH_ERR_INTERNAL_ERROR;
+
 	if (keyp != NULL)
 		*keyp = NULL;
 	if (commentp != NULL)
@@ -4142,9 +4182,11 @@ sshkey_parse_private_fileblob_type(struct sshbuf *blob, int type,
 		return sshkey_parse_private2(blob, type, passphrase,
 		    keyp, commentp);
 	case KEY_UNSPEC:
-		if (sshkey_parse_private2(blob, type, passphrase, keyp,
-		    commentp) == 0)
-			return 0;
+		r = sshkey_parse_private2(blob, type, passphrase, keyp,
+		    commentp);
+		/* Do not fallback to PEM parser if only passphrase is wrong. */
+		if (r == 0 || r == SSH_ERR_KEY_WRONG_PASSPHRASE)
+			return r;
 #ifdef WITH_OPENSSL
 		return sshkey_parse_private_pem_fileblob(blob, type,
 		    passphrase, keyp);

@@ -1,4 +1,4 @@
-/* $OpenBSD: cipher.c,v 1.101 2015/12/10 17:08:40 mmcc Exp $ */
+/* $OpenBSD: cipher.c,v 1.102 2016/08/03 05:41:57 djm Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
  * Copyright (c) 1995 Tatu Ylonen <ylo@cs.hut.fi>, Espoo, Finland
@@ -63,6 +63,15 @@ extern const EVP_CIPHER *evp_aes_ctr_mt(void);
 /* no longer needed. replaced by evp pointer swap */
 /* extern void ssh_aes_ctr_thread_destroy(EVP_CIPHER_CTX *ctx); */
 /* extern void ssh_aes_ctr_thread_reconstruction(EVP_CIPHER_CTX *ctx); */
+
+struct sshcipher_ctx {
+	int	plaintext;
+	int	encrypt;
+	EVP_CIPHER_CTX *evp;
+	struct chachapoly_ctx cp_ctx; /* XXX union with evp? */
+	struct aesctr_ctx ac_ctx; /* XXX union with evp? */
+	const struct sshcipher *cipher;
+};
 
 struct sshcipher {
 	char	*name;
@@ -167,9 +176,9 @@ cipher_alg_list(char sep, int auth_only)
  * single to multithreaded ctr cipher swap we only rekey when appropriate
  */
 const char *
-cipher_return_name(const struct sshcipher *c)
+cipher_ctx_name(const struct sshcipher_ctx *cc)
 {
-	return c->name;
+	return cc->cipher->name;
 }
 
 /* in order to get around sandbox and forking issues with a threaded cipher
@@ -233,6 +242,18 @@ u_int
 cipher_is_cbc(const struct sshcipher *c)
 {
 	return (c->flags & CFLAG_CBC) != 0;
+}
+
+u_int
+cipher_ctx_is_plaintext(struct sshcipher_ctx *cc)
+{
+	return cc->plaintext;
+}
+
+u_int
+cipher_ctx_get_number(struct sshcipher_ctx *cc)
+{
+	return cc->cipher->number;
 }
 
 u_int
@@ -328,63 +349,76 @@ cipher_warning_message(const struct sshcipher_ctx *cc)
 }
 
 int
-cipher_init(struct sshcipher_ctx *cc, const struct sshcipher *cipher,
+cipher_init(struct sshcipher_ctx **ccp, const struct sshcipher *cipher,
     const u_char *key, u_int keylen, const u_char *iv, u_int ivlen,
     int do_encrypt)
 {
-#ifdef WITH_OPENSSL
+	struct sshcipher_ctx *cc = NULL;
 	int ret = SSH_ERR_INTERNAL_ERROR;
+#ifdef WITH_OPENSSL
 	const EVP_CIPHER *type;
 	int klen;
 	u_char *junk, *discard;
+#endif
+
+	*ccp = NULL;
+	if ((cc = calloc(sizeof(*cc), 1)) == NULL)
+		return SSH_ERR_ALLOC_FAIL;
 
 	if (cipher->number == SSH_CIPHER_DES) {
 		if (keylen > 8)
 			keylen = 8;
 	}
-#endif
+
 	cc->plaintext = (cipher->number == SSH_CIPHER_NONE);
 	cc->encrypt = do_encrypt;
 
 	if (keylen < cipher->key_len ||
-	    (iv != NULL && ivlen < cipher_ivlen(cipher)))
-		return SSH_ERR_INVALID_ARGUMENT;
+	    (iv != NULL && ivlen < cipher_ivlen(cipher))) {
+		ret = SSH_ERR_INVALID_ARGUMENT;
+		goto out;
+	}
 
 	cc->cipher = cipher;
 	if ((cc->cipher->flags & CFLAG_CHACHAPOLY) != 0) {
-		return chachapoly_init(&cc->cp_ctx, key, keylen);
+		ret = chachapoly_init(&cc->cp_ctx, key, keylen);
+		goto out;
 	}
 #ifndef WITH_OPENSSL
 	if ((cc->cipher->flags & CFLAG_AESCTR) != 0) {
 		aesctr_keysetup(&cc->ac_ctx, key, 8 * keylen, 8 * ivlen);
 		aesctr_ivsetup(&cc->ac_ctx, iv);
-		return 0;
+		ret = 0;
+		goto out;
 	}
-	if ((cc->cipher->flags & CFLAG_NONE) != 0)
-		return 0;
-	return SSH_ERR_INVALID_ARGUMENT;
-#else
+	if ((cc->cipher->flags & CFLAG_NONE) != 0) {
+		ret = 0;
+		goto out;
+	}
+	ret = SSH_ERR_INVALID_ARGUMENT;
+	goto out;
+#else /* WITH_OPENSSL */
 	type = (*cipher->evptype)();
 	if ((cc->evp = EVP_CIPHER_CTX_new()) == NULL) {
 		ret = SSH_ERR_ALLOC_FAIL;
-		goto bad;
+		goto out;
 	}
 	if (EVP_CipherInit(cc->evp, type, (u_char *)key, (u_char *)iv,
 	    (do_encrypt == CIPHER_ENCRYPT)) == 0) {
 		ret = SSH_ERR_LIBCRYPTO_ERROR;
-		goto bad;
+		goto out;
 	}
 	if (cipher_authlen(cipher) &&
 	    !EVP_CIPHER_CTX_ctrl(cc->evp, EVP_CTRL_GCM_SET_IV_FIXED,
 	    -1, (u_char *)iv)) {
 		ret = SSH_ERR_LIBCRYPTO_ERROR;
-		goto bad;
+		goto out;
 	}
 	klen = EVP_CIPHER_CTX_key_length(cc->evp);
 	if (klen > 0 && keylen != (u_int)klen) {
 		if (EVP_CIPHER_CTX_set_key_length(cc->evp, keylen) == 0) {
 			ret = SSH_ERR_LIBCRYPTO_ERROR;
-			goto bad;
+			goto out;
 		}
 	}
 
@@ -393,7 +427,7 @@ cipher_init(struct sshcipher_ctx *cc, const struct sshcipher *cipher,
 		    (discard = malloc(cipher->discard_len)) == NULL) {
 			free(junk);
 			ret = SSH_ERR_ALLOC_FAIL;
-			goto bad;
+			goto out;
 		}
 		ret = EVP_Cipher(cc->evp, discard, junk, cipher->discard_len);
 		explicit_bzero(discard, cipher->discard_len);
@@ -401,13 +435,26 @@ cipher_init(struct sshcipher_ctx *cc, const struct sshcipher *cipher,
 		free(discard);
 		if (ret != 1) {
 			ret = SSH_ERR_LIBCRYPTO_ERROR;
- bad:
-			EVP_CIPHER_CTX_free(cc->evp);
-			return ret;
+			goto out;
 		}
 	}
-#endif
-	return 0;
+	ret = 0;
+#endif /* WITH_OPENSSL */
+ out:
+	if (ret == 0) {
+		/* success */
+		*ccp = cc;
+	} else {
+		if (cc != NULL) {
+#ifdef WITH_OPENSSL
+			if (cc->evp != NULL)
+				EVP_CIPHER_CTX_free(cc->evp);
+#endif /* WITH_OPENSSL */
+			explicit_bzero(cc, sizeof(*cc));
+			free(cc);
+		}
+	}
+	return ret;
 }
 
 /*
@@ -496,20 +543,23 @@ cipher_get_length(struct sshcipher_ctx *cc, u_int *plenp, u_int seqnr,
 	return 0;
 }
 
-int
-cipher_cleanup(struct sshcipher_ctx *cc)
+void
+cipher_free(struct sshcipher_ctx *cc)
 {
-	if (cc == NULL || cc->cipher == NULL)
-		return 0;
+	if (cc == NULL)
+		return;
 	if ((cc->cipher->flags & CFLAG_CHACHAPOLY) != 0)
 		explicit_bzero(&cc->cp_ctx, sizeof(cc->cp_ctx));
 	else if ((cc->cipher->flags & CFLAG_AESCTR) != 0)
 		explicit_bzero(&cc->ac_ctx, sizeof(cc->ac_ctx));
 #ifdef WITH_OPENSSL
-	EVP_CIPHER_CTX_free(cc->evp);
-	cc->evp = NULL;
+	if (cc->evp != NULL) {
+		EVP_CIPHER_CTX_free(cc->evp);
+		cc->evp = NULL;
+	}
 #endif
-	return 0;
+	explicit_bzero(cc, sizeof(*cc));
+	free(cc);
 }
 
 /*
@@ -517,8 +567,8 @@ cipher_cleanup(struct sshcipher_ctx *cc)
  * passphrase and using the resulting 16 bytes as the key.
  */
 int
-cipher_set_key_string(struct sshcipher_ctx *cc, const struct sshcipher *cipher,
-    const char *passphrase, int do_encrypt)
+cipher_set_key_string(struct sshcipher_ctx **ccp,
+    const struct sshcipher *cipher, const char *passphrase, int do_encrypt)
 {
 	u_char digest[16];
 	int r = SSH_ERR_INTERNAL_ERROR;
@@ -528,7 +578,7 @@ cipher_set_key_string(struct sshcipher_ctx *cc, const struct sshcipher *cipher,
 	    digest, sizeof(digest))) != 0)
 		goto out;
 
-	r = cipher_init(cc, cipher, digest, 16, NULL, 0, do_encrypt);
+	r = cipher_init(ccp, cipher, digest, 16, NULL, 0, do_encrypt);
  out:
 	explicit_bzero(digest, sizeof(digest));
 	return r;
@@ -638,6 +688,12 @@ cipher_set_keyiv(struct sshcipher_ctx *cc, const u_char *iv)
 		evplen = EVP_CIPHER_CTX_iv_length(cc->evp);
 		if (evplen <= 0)
 			return SSH_ERR_LIBCRYPTO_ERROR;
+#ifndef OPENSSL_HAVE_EVPCTR
+		/* XXX iv arg is const, but ssh_aes_ctr_iv isn't */
+		if (c->evptype == evp_aes_128_ctr)
+			ssh_aes_ctr_iv(cc->evp, 1, (u_char *)iv, evplen);
+		else
+#endif
 		if (cipher_authlen(c)) {
 			/* XXX iv arg is const, but EVP_CIPHER_CTX_ctrl isn't */
 			if (!EVP_CIPHER_CTX_ctrl(cc->evp,

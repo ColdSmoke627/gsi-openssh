@@ -62,8 +62,8 @@ kexgss_client(struct ssh *ssh) {
 	BIGNUM *shared_secret = NULL;
 	BIGNUM *p = NULL;
 	BIGNUM *g = NULL;	
-	const BIGNUM *pub_key, *p1, *g1;
 	u_char *kbuf = NULL;
+	const BIGNUM *pub_key, *p1, *g1;
     u_char hash[SSH_DIGEST_MAX_LENGTH];
 	u_char *serverhostkey = NULL;
 	u_char *empty = "";

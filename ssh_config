@@ -28,6 +28,7 @@
 #   GSSAPIDelegateCredentials yes
 #   GSSAPIKeyExchange yes
 #   GSSAPITrustDNS yes
+#   GSSAPIRenewalForcesRekey no
 #   BatchMode no
 #   CheckHostIP yes
 #   AddressFamily any

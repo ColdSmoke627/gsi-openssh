@@ -1,4 +1,4 @@
-/* $OpenBSD: sshconnect.c,v 1.271 2016/01/14 22:56:56 markus Exp $ */
+/* $OpenBSD: sshconnect.c,v 1.273 2017/03/10 03:22:40 dtucker Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
  * Copyright (c) 1995 Tatu Ylonen <ylo@cs.hut.fi>, Espoo, Finland
@@ -15,7 +15,6 @@
 
 #include "includes.h"
 
-#include <sys/param.h>	/* roundup */
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
@@ -283,14 +282,13 @@ ssh_set_socket_recvbuf(int sock)
 
 	debug("setsockopt Attempting to set SO_RCVBUF to %d", options.tcp_rcv_buf);
 	if (setsockopt(sock, SOL_SOCKET, SO_RCVBUF, buf, sz) >= 0) {
-	  getsockopt(sock, SOL_SOCKET, SO_RCVBUF, &socksize, &socksizelen);
-	  debug("setsockopt SO_RCVBUF: %.100s %d", strerror(errno), socksize);
+		getsockopt(sock, SOL_SOCKET, SO_RCVBUF, &socksize, &socksizelen);
+		debug("setsockopt SO_RCVBUF: %.100s %d", strerror(errno), socksize);
 	}
 	else
 		error("Couldn't set socket receive buffer to %d: %.100s",
 		    options.tcp_rcv_buf, strerror(errno));
 }
-
 
 /*
  * Creates a (possibly privileged) socket for use as the ssh connection.
@@ -1432,7 +1430,7 @@ ssh_put_password(char *password)
 		packet_put_cstring(password);
 		return;
 	}
-	size = roundup(strlen(password) + 1, 32);
+	size = ROUNDUP(strlen(password) + 1, 32);
 	padded = xcalloc(1, size);
 	strlcpy(padded, password, size);
 	packet_put_string(padded, size);
@@ -1562,6 +1560,7 @@ maybe_add_key_to_agent(char *authfile, Key *private, char *comment,
 	if (options.add_keys_to_agent == 2 &&
 	    !ask_permission("Add key %s (%s) to agent?", authfile, comment)) {
 		debug3("user denied adding this key");
+		close(auth_sock);
 		return;
 	}
 
@@ -1570,4 +1569,5 @@ maybe_add_key_to_agent(char *authfile, Key *private, char *comment,
 		debug("identity added to agent: %s", authfile);
 	else
 		debug("could not add identity to agent: %s (%d)", authfile, r);
+	close(auth_sock);
 }
