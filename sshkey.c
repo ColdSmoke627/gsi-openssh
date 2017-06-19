@@ -3001,11 +3001,24 @@ sshkey_private_deserialize(struct sshbuf *buf, struct sshkey **kp)
 			    (r = sshbuf_get_bignum2(buf, p)) != 0 ||
 			    (r = sshbuf_get_bignum2(buf, q)) != 0 ||
 			    (r = ((RSA_set0_key(k->rsa, NULL, NULL, d) == 0)
-			        ? SSH_ERR_LIBCRYPTO_ERROR : 0)) != 0 ||
-			    (r = ((RSA_set0_factors(k->rsa, p, q) == 0)
-			        ? SSH_ERR_LIBCRYPTO_ERROR : 0)) != 0 ||
-			    (r = rsa_generate_additional_parameters(k->rsa, iqmp)) != 0)
+			        ? SSH_ERR_LIBCRYPTO_ERROR : 0)) != 0) {
+				BN_free(d);
+				BN_free(iqmp);
+				BN_free(p);
+				BN_free(q);
 				goto out;
+			}
+			if (RSA_set0_factors(k->rsa, p, q) == 0) {
+			        r = SSH_ERR_LIBCRYPTO_ERROR;
+				BN_free(p);
+				BN_free(q);
+				goto out;
+			}
+			if (rsa_generate_additional_parameters(k->rsa, iqmp) != 0) {
+			        r = SSH_ERR_LIBCRYPTO_ERROR;
+				free(iqmp);
+				goto out;
+			}
 		}
 		break;
 #endif /* WITH_OPENSSL */
@@ -3983,9 +3996,14 @@ sshkey_parse_private_rsa1(struct sshbuf *blob, const char *passphrase,
 	    (r = sshbuf_get_bignum1(decrypted, iqmp)) != 0 ||
 	    (r = sshbuf_get_bignum1(decrypted, q)) != 0 ||
 	    (r = sshbuf_get_bignum1(decrypted, p)) != 0 ||
-	    (RSA_set0_key(prv->rsa, NULL, NULL, d) == 0) ||
-	    (RSA_set0_factors(prv->rsa, p, q) == 0)) {
+	    (RSA_set0_key(prv->rsa, NULL, NULL, d) == 0)) {
 		BN_free(d);
+		BN_free(p);
+		BN_free(q);
+		BN_free(iqmp);
+		goto out;
+	}
+	if (RSA_set0_factors(prv->rsa, p, q) == 0) {
 		BN_free(p);
 		BN_free(q);
 		BN_free(iqmp);
@@ -3993,8 +4011,10 @@ sshkey_parse_private_rsa1(struct sshbuf *blob, const char *passphrase,
 	}
 
 	/* calculate p-1 and q-1 */
-	if ((r = rsa_generate_additional_parameters(prv->rsa, iqmp)) != 0)
+	if ((r = rsa_generate_additional_parameters(prv->rsa, iqmp)) != 0) {
+		BN_free(iqmp);
 		goto out;
+	}
 
 	/* enable blinding */
 	if (RSA_blinding_on(prv->rsa, NULL) != 1) {
