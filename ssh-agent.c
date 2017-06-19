@@ -596,14 +596,22 @@ agent_decode_rsa1(struct sshbuf *m, struct sshkey **kp)
 	    /* SSH1 and SSL have p and q swapped */
 	    (r = sshbuf_get_bignum1(m, q)) != 0 ||	/* p */
 	    (r = sshbuf_get_bignum1(m, p)) != 0 || 	/* q */
-	    RSA_set0_key(k->rsa, n, e, d) == 0 ||
-	    RSA_set0_factors(k->rsa, p, q) == 0 ||
-	    RSA_set0_crt_params(k->rsa, NULL, NULL, iqmp) == 0) {
+	    RSA_set0_key(k->rsa, n, e, d) == 0) {
 		BN_free(n);
 		BN_free(e);
 		BN_free(d);
 		BN_free(p);
 		BN_free(q);
+		BN_free(iqmp);
+		goto out;
+	}
+	if (RSA_set0_factors(k->rsa, p, q) == 0) {
+		BN_free(p);
+		BN_free(q);
+		BN_free(iqmp);
+  		goto out;
+	}
+	if (RSA_set0_crt_params(k->rsa, NULL, NULL, iqmp) == 0) {
 		BN_free(iqmp);
 		goto out;
 	}

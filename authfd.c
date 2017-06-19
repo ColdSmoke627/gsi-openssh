@@ -216,8 +216,8 @@ deserialise_identity1(struct sshbuf *ids, struct sshkey **keyp, char **commentp)
 	    (r = sshbuf_get_u32(ids, &bits)) != 0 ||
 	    (r = sshbuf_get_bignum1(ids, e)) != 0 ||
 	    (r = sshbuf_get_bignum1(ids, n)) != 0 ||
-	    (RSA_set0_key(key->rsa, n, e, NULL) == 0) ||
-	    (r = sshbuf_get_cstring(ids, &comment, NULL)) != 0) {
+	    (r = sshbuf_get_cstring(ids, &comment, NULL)) != 0 ||
+	    (RSA_set0_key(key->rsa, n, e, NULL) == 0)) {
 		BN_free(n);
 		BN_free(e);
 		goto out;
