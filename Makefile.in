@@ -305,8 +305,9 @@ catman-do:
 distprep: catman-do
 	$(AUTORECONF)
 	-rm -rf autom4te.cache
-distdir=gsi-openssh-7.5p1a
-distsubdirs=$(srcdir)/scard $(srcdir)/openbsd-compat $(srcdir)/contrib $(srcdir)/regress
+
+distdir=gsi-openssh-7.5p1b
+distsubdirs=$(srcdir)/openbsd-compat $(srcdir)/contrib $(srcdir)/regress
 
 distdir:
 	rm -rf "$(distdir)"
